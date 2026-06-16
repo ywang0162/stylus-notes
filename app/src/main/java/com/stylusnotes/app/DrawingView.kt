@@ -261,6 +261,9 @@ class DrawingView @JvmOverloads constructor(
                 requestUnbufferedDispatch(event)
                 redoStack.clear()
                 mode = Mode.DRAW
+                // Measure touch rate within each stroke, not across idle gaps.
+                sampleCount = 0
+                sampleWindowStartNs = 0L
                 if (shouldContinue(event)) beginStrokeContinuing(lastStroke!!, event)
                 else beginStroke(event)
             }
