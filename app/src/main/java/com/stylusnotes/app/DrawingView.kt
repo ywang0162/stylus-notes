@@ -11,6 +11,7 @@ import android.graphics.PorterDuff
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
+import androidx.input.motionprediction.MotionEventPredictor
 import kotlin.math.ceil
 import kotlin.math.hypot
 
@@ -81,6 +82,16 @@ class DrawingView @JvmOverloads constructor(
         pathEffect = DashPathEffect(floatArrayOf(12f, 10f), 0f)
     }
     private val segPath = Path()
+    private val tailPath = Path()
+
+    // Motion prediction: draws a short, transient tail ahead of the finger to
+    // hide the display's touch-to-photon latency. Predicted ink is never baked
+    // into the cache or saved, so a mispredict is only a momentary visual.
+    var predictionEnabled = true
+    private var predictor: MotionEventPredictor? = null
+    private val predX = ArrayList<Float>()
+    private val predY = ArrayList<Float>()
+    private val maxPredictDp = 18f
 
     // --- input state ---
     private var mode = Mode.NONE
@@ -209,6 +220,8 @@ class DrawingView @JvmOverloads constructor(
     // ---- Touch handling -----------------------------------------------------
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (predictor == null) predictor = MotionEventPredictor.newInstance(this)
+        predictor?.record(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 currentIsFinger = event.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER
@@ -229,6 +242,7 @@ class DrawingView @JvmOverloads constructor(
                     current = null
                     rebuildCache()
                 }
+                clearPrediction()
                 lastStroke = null
                 mode = Mode.SCROLL
                 lastFocalY = focalY(event, -1)
@@ -248,6 +262,7 @@ class DrawingView @JvmOverloads constructor(
                     }
                     addSample(event.x, event.y, pressure(event.pressure), event.eventTime, s)
                     bakeNewSegments(s)
+                    updatePrediction(s)
                     invalidate()
                 }
                 Mode.SCROLL -> {
@@ -263,12 +278,14 @@ class DrawingView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_UP -> {
+                clearPrediction()
                 if (mode == Mode.DRAW) commitStroke(event)
                 current = null
                 mode = Mode.NONE
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                clearPrediction()
                 if (mode == Mode.DRAW && current != null) {
                     current = null
                     rebuildCache()
@@ -451,6 +468,56 @@ class DrawingView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         cache?.let { canvas.drawBitmap(it, 0f, 0f, null) } ?: canvas.drawColor(pageColor)
+        drawLiveTail(canvas)
+    }
+
+    /** Asks the predictor for the next few points and caps how far ahead we draw. */
+    private fun updatePrediction(s: Stroke) {
+        predX.clear()
+        predY.clear()
+        if (!predictionEnabled || s.isEraser || s.size == 0) return
+        val predicted = predictor?.predict() ?: return
+        var lastX = s.xs[s.size - 1]
+        var lastY = s.ys[s.size - 1]
+        var acc = 0f
+        val count = predicted.historySize + 1
+        for (k in 0 until count) {
+            val px = if (k < predicted.historySize) predicted.getHistoricalX(k) else predicted.x
+            val py = (if (k < predicted.historySize) predicted.getHistoricalY(k) else predicted.y) + scrollY
+            acc += hypot(px - lastX, py - lastY) / density
+            if (acc > maxPredictDp) break
+            predX.add(px)
+            predY.add(py)
+            lastX = px
+            lastY = py
+        }
+    }
+
+    private fun clearPrediction() {
+        predX.clear()
+        predY.clear()
+    }
+
+    /** Draws the unbaked tip of the live stroke plus any predicted points. */
+    private fun drawLiveTail(canvas: Canvas) {
+        if (mode != Mode.DRAW) return
+        val s = current ?: return
+        val n = s.size
+        if (n == 0) return
+        paint.color = if (s.isEraser) pageColor else s.color
+        paint.strokeWidth = widthAt(s, n - 1)
+        val oy = -scrollY
+        tailPath.reset()
+        if (n >= 2) {
+            val mx = (s.xs[n - 2] + s.xs[n - 1]) / 2f
+            val my = (s.ys[n - 2] + s.ys[n - 1]) / 2f
+            tailPath.moveTo(mx, my + oy)
+            tailPath.lineTo(s.xs[n - 1], s.ys[n - 1] + oy)
+        } else {
+            tailPath.moveTo(s.xs[0], s.ys[0] + oy)
+        }
+        for (i in predX.indices) tailPath.lineTo(predX[i], predY[i] + oy)
+        canvas.drawPath(tailPath, paint)
     }
 
     // ---- Stroke drawing (quadratic-midpoint smoothing) ----------------------
