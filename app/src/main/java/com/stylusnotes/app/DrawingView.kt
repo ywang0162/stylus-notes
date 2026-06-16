@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.DashPathEffect
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PorterDuff
 import android.util.AttributeSet
 import android.view.MotionEvent
@@ -14,16 +15,21 @@ import kotlin.math.ceil
 import kotlin.math.hypot
 
 /**
- * A continuous, vertically-scrolling handwriting surface.
+ * A continuous, vertically-scrolling handwriting surface tuned for fast, smooth
+ * finger writing.
  *
- * - **One finger / stylus draws.** Input is lightly smoothed and the line width
- *   is modulated by drawing speed (and pen pressure when available) so finger
- *   handwriting looks natural.
- * - **Two fingers scroll** the document up and down. Dragging past the bottom
- *   grows the note by another page, so there is no "add page" button.
+ * Performance/feel design:
+ * - **Incremental baking.** Each new stroke segment is drawn straight into the
+ *   committed [cache] bitmap as the finger moves, so per-frame work is constant
+ *   instead of growing with stroke length. [onDraw] is just a single blit.
+ * - **Low-latency smoothing.** Strokes are rendered as quadratic curves through
+ *   the midpoints of the raw samples. This smooths finger jitter without the
+ *   trailing lag of an averaging filter, so the ink stays under the fingertip.
+ * - **Width from speed.** Line width follows drawing speed (and pen pressure for
+ *   a stylus); only the width weight is smoothed, never the geometry.
  *
- * Strokes are kept in document coordinates. Only the visible window is
- * rasterised into [cache]; the in-progress stroke is drawn on top each frame.
+ * Touch model: one finger/stylus draws, two fingers scroll, and dragging past
+ * the bottom grows the document by a page.
  */
 class DrawingView @JvmOverloads constructor(
     context: Context,
@@ -57,13 +63,10 @@ class DrawingView @JvmOverloads constructor(
     private var cache: Bitmap? = null
     private var cacheCanvas: Canvas? = null
 
-    /** Height of one page in pixels; set once the view is measured. */
     var pageHeightPx = 0f
         private set
     var pageCount = 1
         private set
-
-    /** Document-space offset of the top of the viewport. */
     var scrollY = 0f
         private set
 
@@ -77,20 +80,23 @@ class DrawingView @JvmOverloads constructor(
         color = Color.parseColor("#D7DCE0")
         pathEffect = DashPathEffect(floatArrayOf(12f, 10f), 0f)
     }
+    private val segPath = Path()
 
     // --- input state ---
     private var mode = Mode.NONE
     private var currentIsFinger = false
-    private var lastFocalY = 0f
-    private var lastSx = 0f
-    private var lastSy = 0f
-    private var lastT = 0L
     private var firstSample = false
+    private var liveSegDrawn = 0
+    private var lastFocalY = 0f
+    private var lastX = 0f
+    private var lastY = 0f
+    private var lastT = 0L
+    private var lastWeight = 1f
 
-    private val smoothing = 0.4f
-    private val taperMin = 0.45f
+    private val weightSmoothing = 0.5f
+    private val taperMin = 0.5f
     private val slowDpPerMs = 0.35f
-    private val fastDpPerMs = 2.8f
+    private val fastDpPerMs = 3.0f
     private val pageGrowthCap = 1000
 
     init {
@@ -163,7 +169,7 @@ class DrawingView @JvmOverloads constructor(
         c.scale(scale, scale)
         c.clipRect(0f, 0f, width.toFloat(), pageHeightPx)
         for (s in strokes) {
-            if (s.minY <= pageHeightPx) drawStroke(c, s, 0f)
+            if (s.minY <= pageHeightPx) drawStrokeFull(c, s, 0f)
         }
         return bmp
     }
@@ -184,7 +190,7 @@ class DrawingView @JvmOverloads constructor(
             val y = p * pageHeightPx
             c.drawLine(0f, y, width.toFloat(), y, separatorPaint)
         }
-        for (s in strokes) drawStroke(c, s, 0f)
+        for (s in strokes) drawStrokeFull(c, s, 0f)
         return bmp
     }
 
@@ -205,11 +211,13 @@ class DrawingView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_POINTER_DOWN -> {
-                // A second finger means: scroll, not draw. Drop the half-drawn stroke.
-                if (mode == Mode.DRAW) current = null
+                // Second finger: stop drawing, drop the half-drawn stroke, scroll.
+                if (mode == Mode.DRAW) {
+                    current = null
+                    rebuildCache()
+                }
                 mode = Mode.SCROLL
                 lastFocalY = focalY(event, -1)
-                invalidate()
             }
 
             MotionEvent.ACTION_MOVE -> when (mode) {
@@ -225,6 +233,7 @@ class DrawingView @JvmOverloads constructor(
                         )
                     }
                     addSample(event.x, event.y, pressure(event.pressure), event.eventTime, s)
+                    bakeNewSegments(s)
                     invalidate()
                 }
                 Mode.SCROLL -> {
@@ -236,25 +245,22 @@ class DrawingView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_POINTER_UP -> {
-                // Stay in scroll mode; recompute the focal point without the lifted finger.
-                if (mode == Mode.SCROLL) {
-                    lastFocalY = focalY(event, event.actionIndex)
-                }
+                if (mode == Mode.SCROLL) lastFocalY = focalY(event, event.actionIndex)
             }
 
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                if (mode == Mode.DRAW) {
-                    current?.let { s ->
-                        if (s.size > 0) {
-                            strokes.add(s)
-                            cacheCanvas?.let { drawStroke(it, s, -scrollY) }
-                            onContentChanged?.invoke()
-                        }
-                    }
+            MotionEvent.ACTION_UP -> {
+                if (mode == Mode.DRAW) commitStroke(event)
+                current = null
+                mode = Mode.NONE
+            }
+
+            MotionEvent.ACTION_CANCEL -> {
+                if (mode == Mode.DRAW && current != null) {
+                    current = null
+                    rebuildCache()
                 }
                 current = null
                 mode = Mode.NONE
-                invalidate()
             }
         }
         return true
@@ -276,39 +282,61 @@ class DrawingView @JvmOverloads constructor(
     private fun beginStroke(event: MotionEvent) {
         val s = Stroke(strokeColor, strokeWidth, tool == Tool.ERASER)
         firstSample = true
+        lastWeight = 1f
         addSample(event.x, event.y, pressure(event.pressure), event.eventTime, s)
+        liveSegDrawn = 0
         current = s
+    }
+
+    private fun commitStroke(event: MotionEvent) {
+        val s = current ?: return
+        addSample(event.x, event.y, pressure(event.pressure), event.eventTime, s)
+        bakeNewSegments(s)
+        val c = cacheCanvas
+        if (c != null) {
+            if (s.size == 1) drawDot(c, s, -scrollY) else drawClosing(c, s, -scrollY)
+        }
+        if (s.size > 0) {
+            strokes.add(s)
+            onContentChanged?.invoke()
+        }
         invalidate()
     }
 
+    /** Stores one raw sample with a smoothed width weight (geometry stays raw). */
     private fun addSample(rawX: Float, rawY: Float, press: Float, time: Long, s: Stroke) {
         val docX = rawX
         val docY = rawY + scrollY
-        val sx: Float
-        val sy: Float
+        val weight: Float
         if (firstSample) {
-            sx = docX
-            sy = docY
+            weight = 1f
+            firstSample = false
         } else {
-            sx = lastSx + smoothing * (docX - lastSx)
-            sy = lastSy + smoothing * (docY - lastSy)
+            val dt = (time - lastT).coerceAtLeast(1L)
+            val dist = hypot(docX - lastX, docY - lastY)
+            val speedDp = (dist / dt) / density
+            val t = ((speedDp - slowDpPerMs) / (fastDpPerMs - slowDpPerMs)).coerceIn(0f, 1f)
+            val velFactor = 1f - t * (1f - taperMin)
+            val raw =
+                if (currentIsFinger) velFactor
+                else press.coerceIn(0f, 1f) * (0.5f + 0.5f * velFactor)
+            weight = lastWeight + weightSmoothing * (raw - lastWeight)
         }
-        val weight = computeWeight(sx, sy, press, time)
-        s.addPoint(sx, sy, weight)
-        lastSx = sx
-        lastSy = sy
+        s.addPoint(docX, docY, weight)
+        lastX = docX
+        lastY = docY
         lastT = time
-        firstSample = false
+        lastWeight = weight
     }
 
-    private fun computeWeight(sx: Float, sy: Float, press: Float, time: Long): Float {
-        if (firstSample) return 1f
-        val dt = (time - lastT).coerceAtLeast(1L)
-        val dist = hypot(sx - lastSx, sy - lastSy)
-        val speedDp = (dist / dt) / density
-        val t = ((speedDp - slowDpPerMs) / (fastDpPerMs - slowDpPerMs)).coerceIn(0f, 1f)
-        val velFactor = 1f - t * (1f - taperMin)
-        return if (currentIsFinger) velFactor else press.coerceIn(0f, 1f) * (0.5f + 0.5f * velFactor)
+    /** Bakes any not-yet-rendered segments of the live stroke into the cache. */
+    private fun bakeNewSegments(s: Stroke) {
+        val c = cacheCanvas ?: return
+        while (liveSegDrawn < s.size - 1) {
+            val i = liveSegDrawn + 1
+            drawSegment(c, s, i, -scrollY)
+            liveSegDrawn = i
+        }
     }
 
     private fun maxScroll(): Float = (pageCount * pageHeightPx - height).coerceAtLeast(0f)
@@ -317,7 +345,6 @@ class DrawingView @JvmOverloads constructor(
         if (pageHeightPx <= 0f) return
         var desired = scrollY - fingerDeltaY
         if (desired > maxScroll()) {
-            // Dragging past the end grows the document downward, one page at a time.
             var guard = 0
             while (desired > maxScroll() && pageCount < pageGrowthCap && guard < 8) {
                 pageCount++
@@ -368,39 +395,75 @@ class DrawingView @JvmOverloads constructor(
             }
         }
         for (s in strokes) {
-            if (s.maxY >= top && s.minY <= bottom) drawStroke(c, s, -scrollY)
+            if (s.maxY >= top && s.minY <= bottom) drawStrokeFull(c, s, -scrollY)
         }
         invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
         cache?.let { canvas.drawBitmap(it, 0f, 0f, null) } ?: canvas.drawColor(pageColor)
-        current?.let { drawStroke(canvas, it, -scrollY) }
     }
 
-    private fun drawStroke(canvas: Canvas, s: Stroke, offsetY: Float) {
+    // ---- Stroke drawing (quadratic-midpoint smoothing) ----------------------
+
+    private fun drawStrokeFull(canvas: Canvas, s: Stroke, oy: Float) {
         val n = s.size
         if (n == 0) return
-        paint.color = if (s.isEraser) pageColor else s.color
         if (n == 1) {
-            paint.style = Paint.Style.FILL
-            canvas.drawCircle(s.xs[0], s.ys[0] + offsetY, widthAt(s, 0) / 2f, paint)
-            paint.style = Paint.Style.STROKE
+            drawDot(canvas, s, oy)
             return
         }
-        for (i in 1 until n) {
-            paint.strokeWidth = widthAt(s, i)
-            canvas.drawLine(
-                s.xs[i - 1], s.ys[i - 1] + offsetY,
-                s.xs[i], s.ys[i] + offsetY,
-                paint
-            )
+        for (i in 1 until n) drawSegment(canvas, s, i, oy)
+        drawClosing(canvas, s, oy)
+    }
+
+    /** Draws the smoothed segment that ends at the midpoint of points i-1 and i. */
+    private fun drawSegment(canvas: Canvas, s: Stroke, i: Int, oy: Float) {
+        paint.color = if (s.isEraser) pageColor else s.color
+        paint.strokeWidth = widthAt(s, i)
+        val x0 = s.xs[i - 1]; val y0 = s.ys[i - 1] + oy
+        val x1 = s.xs[i]; val y1 = s.ys[i] + oy
+        val m1x = (x0 + x1) / 2f; val m1y = (y0 + y1) / 2f
+        segPath.reset()
+        if (i == 1) {
+            segPath.moveTo(x0, y0)
+            segPath.lineTo(m1x, m1y)
+        } else {
+            val xp = s.xs[i - 2]; val yp = s.ys[i - 2] + oy
+            val m0x = (xp + x0) / 2f; val m0y = (yp + y0) / 2f
+            segPath.moveTo(m0x, m0y)
+            segPath.quadTo(x0, y0, m1x, m1y)
         }
+        canvas.drawPath(segPath, paint)
+    }
+
+    /** Connects the last drawn midpoint to the true final point. */
+    private fun drawClosing(canvas: Canvas, s: Stroke, oy: Float) {
+        val n = s.size
+        if (n < 2) return
+        val i = n - 1
+        paint.color = if (s.isEraser) pageColor else s.color
+        paint.strokeWidth = widthAt(s, i)
+        val x0 = s.xs[i - 1]; val y0 = s.ys[i - 1] + oy
+        val x1 = s.xs[i]; val y1 = s.ys[i] + oy
+        val m0x = (x0 + x1) / 2f; val m0y = (y0 + y1) / 2f
+        segPath.reset()
+        segPath.moveTo(m0x, m0y)
+        segPath.lineTo(x1, y1)
+        canvas.drawPath(segPath, paint)
+    }
+
+    private fun drawDot(canvas: Canvas, s: Stroke, oy: Float) {
+        paint.color = if (s.isEraser) pageColor else s.color
+        paint.style = Paint.Style.FILL
+        canvas.drawCircle(s.xs[0], s.ys[0] + oy, widthAt(s, 0) / 2f, paint)
+        paint.style = Paint.Style.STROKE
     }
 
     private fun widthAt(s: Stroke, i: Int): Float {
         if (s.isEraser) return eraserWidth
-        val weight = s.ps[i].coerceIn(0f, 1f)
+        val idx = i.coerceIn(0, s.size - 1)
+        val weight = s.ps[idx].coerceIn(0f, 1f)
         val scaled = 0.3f + 0.7f * weight
         val w = s.baseWidth * (1f - widthVariation + widthVariation * scaled)
         return w.coerceAtLeast(0.7f)
