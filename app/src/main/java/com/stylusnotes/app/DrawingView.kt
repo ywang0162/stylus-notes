@@ -93,6 +93,14 @@ class DrawingView @JvmOverloads constructor(
     private var lastT = 0L
     private var lastWeight = 1f
 
+    // Stroke continuation: stitches strokes back together when the digitizer
+    // briefly drops contact (common on the Thor's secondary screen, esp. at the
+    // edges), so loops like "O" don't fragment into disconnected arcs.
+    private var lastStroke: Stroke? = null
+    private var lastUpTime = 0L
+    private val continuationMaxGapMs = 140L
+    private val continuationMaxDistDp = 18f
+
     private val weightSmoothing = 0.5f
     private val taperMin = 0.5f
     private val slowDpPerMs = 0.35f
@@ -117,6 +125,7 @@ class DrawingView @JvmOverloads constructor(
         strokes.addAll(newStrokes)
         redoStack.clear()
         current = null
+        lastStroke = null
         pageCount = newPageCount.coerceAtLeast(1)
         scrollY = 0f
         ensurePagesCoverStrokes()
@@ -129,6 +138,7 @@ class DrawingView @JvmOverloads constructor(
     fun undo() {
         if (strokes.isEmpty()) return
         redoStack.add(strokes.removeAt(strokes.lastIndex))
+        lastStroke = null
         rebuildCache()
         onContentChanged?.invoke()
     }
@@ -136,6 +146,7 @@ class DrawingView @JvmOverloads constructor(
     fun redo() {
         if (redoStack.isEmpty()) return
         strokes.add(redoStack.removeAt(redoStack.lastIndex))
+        lastStroke = null
         rebuildCache()
         onContentChanged?.invoke()
     }
@@ -144,6 +155,7 @@ class DrawingView @JvmOverloads constructor(
         strokes.clear()
         redoStack.clear()
         current = null
+        lastStroke = null
         pageCount = 1
         scrollY = 0f
         rebuildCache()
@@ -207,7 +219,8 @@ class DrawingView @JvmOverloads constructor(
                 requestUnbufferedDispatch(event)
                 redoStack.clear()
                 mode = Mode.DRAW
-                beginStroke(event)
+                if (shouldContinue(event)) beginStrokeContinuing(lastStroke!!, event)
+                else beginStroke(event)
             }
 
             MotionEvent.ACTION_POINTER_DOWN -> {
@@ -216,6 +229,7 @@ class DrawingView @JvmOverloads constructor(
                     current = null
                     rebuildCache()
                 }
+                lastStroke = null
                 mode = Mode.SCROLL
                 lastFocalY = focalY(event, -1)
             }
@@ -288,6 +302,39 @@ class DrawingView @JvmOverloads constructor(
         current = s
     }
 
+    /** True if a fresh touch is close enough (in time and space) to the last
+     *  stroke that it is almost certainly the same stroke resuming after a
+     *  momentary contact dropout, rather than a deliberate new stroke. */
+    private fun shouldContinue(event: MotionEvent): Boolean {
+        val ls = lastStroke ?: return false
+        if (ls.size == 0) return false
+        if (event.eventTime - lastUpTime > continuationMaxGapMs) return false
+        if (ls.isEraser != (tool == Tool.ERASER)) return false
+        if (!ls.isEraser && ls.color != strokeColor) return false
+        val ex = ls.xs[ls.size - 1]
+        val ey = ls.ys[ls.size - 1]
+        val distDp = hypot(event.x - ex, (event.y + scrollY) - ey) / density
+        return distDp <= continuationMaxDistDp
+    }
+
+    /** Starts a new stroke seeded at the previous stroke's end point, so the
+     *  bridge across the dropout is drawn and the result looks continuous. */
+    private fun beginStrokeContinuing(prev: Stroke, event: MotionEvent) {
+        val s = Stroke(strokeColor, strokeWidth, tool == Tool.ERASER)
+        val last = prev.size - 1
+        s.addPoint(prev.xs[last], prev.ys[last], prev.ps[last])
+        firstSample = false
+        lastX = prev.xs[last]
+        lastY = prev.ys[last]
+        lastT = event.eventTime
+        lastWeight = prev.ps[last]
+        liveSegDrawn = 0
+        current = s
+        addSample(event.x, event.y, pressure(event.pressure), event.eventTime, s)
+        bakeNewSegments(s)
+        invalidate()
+    }
+
     private fun commitStroke(event: MotionEvent) {
         val s = current ?: return
         addSample(event.x, event.y, pressure(event.pressure), event.eventTime, s)
@@ -298,6 +345,8 @@ class DrawingView @JvmOverloads constructor(
         }
         if (s.size > 0) {
             strokes.add(s)
+            lastStroke = s
+            lastUpTime = event.eventTime
             onContentChanged?.invoke()
         }
         invalidate()
