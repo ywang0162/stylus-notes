@@ -77,6 +77,15 @@ class NoteActivity : AppCompatActivity() {
         btnClear.setOnClickListener { confirmClear() }
         btnStylus.setOnClickListener { toggleStylusOnly() }
         btnExport.setOnClickListener { exportNote() }
+
+        // Long-press the page counter to toggle the on-device performance HUD.
+        tvPage.setOnLongClickListener {
+            val on = !drawingView.showDiagnostics
+            drawingView.showDiagnostics = on
+            drawingView.invalidate()
+            toast(if (on) "Diagnostics on: FPS / render ms / touch rate" else "Diagnostics off")
+            true
+        }
     }
 
     private fun selectTool(tool: DrawingView.Tool) {

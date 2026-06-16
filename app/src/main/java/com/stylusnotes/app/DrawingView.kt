@@ -92,6 +92,23 @@ class DrawingView @JvmOverloads constructor(
     private val predY = ArrayList<Float>()
     private val maxPredictDp = 18f
 
+    // Diagnostics HUD: lets you read engine + digitizer performance ON the
+    // device. Touch rate is the key signal for "spotty" — a healthy panel
+    // reports ~120-240 samples/s smoothly; low or erratic means the hardware,
+    // not the engine, is the limit.
+    var showDiagnostics = false
+    private var fps = 0f
+    private var renderMs = 0f
+    private var sampleRate = 0f
+    private var sampleCount = 0
+    private var sampleWindowStartNs = 0L
+    private var lastFrameNs = 0L
+    private val hudPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textSize = 11f * resources.displayMetrics.density
+    }
+    private val hudBgPaint = Paint().apply { color = Color.parseColor("#B0000000") }
+
     // --- input state ---
     private var mode = Mode.NONE
     private var currentIsFinger = false
@@ -262,6 +279,7 @@ class DrawingView @JvmOverloads constructor(
                     addSample(event.x, event.y, pressure(event.pressure), event.eventTime, s)
                     bakeNewSegments(s)
                     updatePrediction(s)
+                    if (showDiagnostics) countSamples(1 + event.historySize)
                     invalidate()
                 }
                 Mode.SCROLL -> {
@@ -464,8 +482,38 @@ class DrawingView @JvmOverloads constructor(
     }
 
     override fun onDraw(canvas: Canvas) {
+        val frameStart = System.nanoTime()
         cache?.let { canvas.drawBitmap(it, 0f, 0f, null) } ?: canvas.drawColor(pageColor)
         drawLiveTail(canvas)
+        if (showDiagnostics) drawDiagnostics(canvas, frameStart)
+    }
+
+    private fun countSamples(n: Int) {
+        sampleCount += n
+        val now = System.nanoTime()
+        if (sampleWindowStartNs == 0L) sampleWindowStartNs = now
+        val elapsed = (now - sampleWindowStartNs) / 1e9f
+        if (elapsed >= 0.4f) {
+            sampleRate = sampleCount / elapsed
+            sampleCount = 0
+            sampleWindowStartNs = now
+        }
+    }
+
+    private fun drawDiagnostics(canvas: Canvas, frameStartNs: Long) {
+        val now = System.nanoTime()
+        // Render cost is measured before the HUD text is drawn (ink cost only).
+        renderMs = renderMs * 0.8f + ((now - frameStartNs) / 1e6f) * 0.2f
+        if (lastFrameNs != 0L) {
+            val dt = (now - lastFrameNs) / 1e9f
+            if (dt > 0f) fps = if (fps == 0f) 1f / dt else fps * 0.9f + (1f / dt) * 0.1f
+        }
+        lastFrameNs = now
+        val text = "FPS ${fps.toInt()}   render ${"%.1f".format(renderMs)}ms   touch ${sampleRate.toInt()}/s"
+        val pad = 6f * density
+        val tw = hudPaint.measureText(text)
+        canvas.drawRect(0f, 0f, tw + pad * 2, hudPaint.textSize + pad * 2, hudBgPaint)
+        canvas.drawText(text, pad, hudPaint.textSize + pad, hudPaint)
     }
 
     /** Asks the predictor for the next few points and caps how far ahead we draw. */
