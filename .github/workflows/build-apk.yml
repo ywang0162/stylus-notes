@@ -32,6 +32,9 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
+      - name: Run unit tests (handwriting engine)
+        run: ./gradlew testDebugUnitTest --stacktrace
+
       - name: Build debug APK
         run: ./gradlew assembleDebug --stacktrace
 

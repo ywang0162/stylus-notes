@@ -12,7 +12,6 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import androidx.input.motionprediction.MotionEventPredictor
-import kotlin.math.ceil
 import kotlin.math.hypot
 
 /**
@@ -325,13 +324,15 @@ class DrawingView @JvmOverloads constructor(
     private fun shouldContinue(event: MotionEvent): Boolean {
         val ls = lastStroke ?: return false
         if (ls.size == 0) return false
-        if (event.eventTime - lastUpTime > continuationMaxGapMs) return false
-        if (ls.isEraser != (tool == Tool.ERASER)) return false
-        if (!ls.isEraser && ls.color != strokeColor) return false
         val ex = ls.xs[ls.size - 1]
         val ey = ls.ys[ls.size - 1]
         val distDp = hypot(event.x - ex, (event.y + scrollY) - ey) / density
-        return distDp <= continuationMaxDistDp
+        val sameStyle = ls.isEraser == (tool == Tool.ERASER) &&
+            (ls.isEraser || ls.color == strokeColor)
+        return InkMath.shouldContinue(
+            event.eventTime - lastUpTime, distDp, sameStyle,
+            continuationMaxGapMs, continuationMaxDistDp
+        )
     }
 
     /** Starts a new stroke seeded at the previous stroke's end point, so the
@@ -378,15 +379,10 @@ class DrawingView @JvmOverloads constructor(
             weight = 1f
             firstSample = false
         } else {
-            val dt = (time - lastT).coerceAtLeast(1L)
-            val dist = hypot(docX - lastX, docY - lastY)
-            val speedDp = (dist / dt) / density
-            val t = ((speedDp - slowDpPerMs) / (fastDpPerMs - slowDpPerMs)).coerceIn(0f, 1f)
-            val velFactor = 1f - t * (1f - taperMin)
-            val raw =
-                if (currentIsFinger) velFactor
-                else press.coerceIn(0f, 1f) * (0.5f + 0.5f * velFactor)
-            weight = lastWeight + weightSmoothing * (raw - lastWeight)
+            val speedDp = InkMath.speedDpPerMs(docX - lastX, docY - lastY, time - lastT, density)
+            val velFactor = InkMath.velocityWeight(speedDp, taperMin, slowDpPerMs, fastDpPerMs)
+            val raw = InkMath.strokeWeight(currentIsFinger, press, velFactor)
+            weight = InkMath.smoothWeight(lastWeight, raw, weightSmoothing)
         }
         s.addPoint(docX, docY, weight)
         lastX = docX
@@ -395,17 +391,18 @@ class DrawingView @JvmOverloads constructor(
         lastWeight = weight
     }
 
-    /** Bakes any not-yet-rendered segments of the live stroke into the cache. */
+    /** Bakes any not-yet-rendered segments of the live stroke into the cache.
+     *  Draws [InkMath.pendingSegments] segments — at most one per added point. */
     private fun bakeNewSegments(s: Stroke) {
         val c = cacheCanvas ?: return
-        while (liveSegDrawn < s.size - 1) {
+        repeat(InkMath.pendingSegments(liveSegDrawn, s.size)) {
             val i = liveSegDrawn + 1
             drawSegment(c, s, i, -scrollY)
             liveSegDrawn = i
         }
     }
 
-    private fun maxScroll(): Float = (pageCount * pageHeightPx - height).coerceAtLeast(0f)
+    private fun maxScroll(): Float = InkMath.maxScroll(pageCount, pageHeightPx, height)
 
     private fun applyScroll(fingerDeltaY: Float) {
         if (pageHeightPx <= 0f) return
@@ -430,7 +427,7 @@ class DrawingView @JvmOverloads constructor(
         if (pageHeightPx <= 0f) return
         var maxY = 0f
         for (s in strokes) if (s.maxY > maxY) maxY = s.maxY
-        val needed = ceil(maxY / pageHeightPx).toInt().coerceAtLeast(1)
+        val needed = InkMath.pagesNeeded(maxY, pageHeightPx)
         if (needed > pageCount) pageCount = needed
     }
 
@@ -579,9 +576,6 @@ class DrawingView @JvmOverloads constructor(
     private fun widthAt(s: Stroke, i: Int): Float {
         if (s.isEraser) return eraserWidth
         val idx = i.coerceIn(0, s.size - 1)
-        val weight = s.ps[idx].coerceIn(0f, 1f)
-        val scaled = 0.3f + 0.7f * weight
-        val w = s.baseWidth * (1f - widthVariation + widthVariation * scaled)
-        return w.coerceAtLeast(0.7f)
+        return InkMath.widthFor(s.baseWidth, s.ps[idx], widthVariation)
     }
 }
