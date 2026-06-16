@@ -1,9 +1,19 @@
 # Stylus Notes
 
+[![Build APK](https://github.com/ywang0162/stylus-notes/actions/workflows/build-apk.yml/badge.svg)](https://github.com/ywang0162/stylus-notes/actions/workflows/build-apk.yml)
+
 A deliberately simple Android handwriting note-taking app, built for the
 **AYN Thor's secondary (bottom) screen** with an active stylus. It's a single
 full-screen drawing surface with a compact, horizontally-scrolling toolbar so
 the whole UI fits a short, wide secondary display.
+
+## Download
+
+Grab the ready-to-install APK from the
+**[latest release](https://github.com/ywang0162/stylus-notes/releases/tag/v1.0)**
+(`stylus-notes-debug.apk`). It's rebuilt automatically by GitHub Actions on every
+push to `main`. It's debug-signed, so on the device enable "install unknown apps"
+for your browser/file manager before sideloading, or use `adb install`.
 
 ## Features
 
