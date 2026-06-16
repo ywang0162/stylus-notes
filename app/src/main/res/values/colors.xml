@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="accent">#2962FF</color>
+    <color name="accent_translucent">#332962FF</color>
+    <color name="toolbar_bg">#ECEFF1</color>
+    <color name="icon_tint">#37474F</color>
+    <color name="ink_black">#000000</color>
+    <color name="ink_blue">#1565C0</color>
+    <color name="ink_red">#C62828</color>
+    <color name="ink_green">#2E7D32</color>
+</resources>

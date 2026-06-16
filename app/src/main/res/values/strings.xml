@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Stylus Notes</string>
+
+    <string name="cd_pen">Pen</string>
+    <string name="cd_eraser">Eraser</string>
+    <string name="cd_color_black">Black ink</string>
+    <string name="cd_color_blue">Blue ink</string>
+    <string name="cd_color_red">Red ink</string>
+    <string name="cd_color_green">Green ink</string>
+    <string name="cd_width">Pen width</string>
+    <string name="cd_undo">Undo</string>
+    <string name="cd_redo">Redo</string>
+    <string name="cd_clear">Clear page</string>
+    <string name="cd_stylus">Stylus only</string>
+    <string name="cd_prev">Previous page</string>
+    <string name="cd_next">Next page</string>
+    <string name="cd_new_page">New page</string>
+    <string name="cd_export">Export page as image</string>
+</resources>

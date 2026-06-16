@@ -1,0 +1,56 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install required SDK packages
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Rename APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk stylus-notes-debug.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stylus-notes-debug-apk
+          path: stylus-notes-debug.apk
+
+      - name: Publish APK to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0
+          name: Stylus Notes v1.0 (debug build)
+          body: |
+            Debug-signed APK for sideloading onto the AYN Thor (or any Android 10+ device).
+            Built automatically by GitHub Actions from the latest commit on `main`.
+          files: stylus-notes-debug.apk
+          make_latest: true

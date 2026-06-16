@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/toolbar_bg"
+        android:fillViewport="true"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="4dp"
+            android:paddingVertical="4dp">
+
+            <ImageButton
+                android:id="@+id/btn_pen"
+                style="@style/ToolButton"
+                android:contentDescription="@string/cd_pen"
+                android:src="@drawable/ic_pen" />
+
+            <ImageButton
+                android:id="@+id/btn_eraser"
+                style="@style/ToolButton"
+                android:contentDescription="@string/cd_eraser"
+                android:src="@drawable/ic_eraser" />
+
+            <View style="@style/ToolDivider" />
+
+            <ImageButton
+                android:id="@+id/btn_color_black"
+                style="@style/SwatchButton"
+                android:background="@drawable/swatch_black"
+                android:contentDescription="@string/cd_color_black" />
+
+            <ImageButton
+                android:id="@+id/btn_color_blue"
+                style="@style/SwatchButton"
+                android:background="@drawable/swatch_blue"
+                android:contentDescription="@string/cd_color_blue" />
+
+            <ImageButton
+                android:id="@+id/btn_color_red"
+                style="@style/SwatchButton"
+                android:background="@drawable/swatch_red"
+                android:contentDescription="@string/cd_color_red" />
+
+            <ImageButton
+                android:id="@+id/btn_color_green"
+                style="@style/SwatchButton"
+                android:background="@drawable/swatch_green"
+                android:contentDescription="@string/cd_color_green" />
+
+            <ImageButton
+                android:id="@+id/btn_width"
+                style="@style/ToolButton"
+                android:contentDescription="@string/cd_width"
+                android:src="@drawable/ic_width" />
+
+            <View style="@style/ToolDivider" />
+
+            <ImageButton
+                android:id="@+id/btn_undo"
+                style="@style/ToolButton"
+                android:contentDescription="@string/cd_undo"
+                android:src="@drawable/ic_undo" />
+
+            <ImageButton
+                android:id="@+id/btn_redo"
+                style="@style/ToolButton"
+                android:contentDescription="@string/cd_redo"
+                android:src="@drawable/ic_redo" />
+
+            <ImageButton
+                android:id="@+id/btn_clear"
+                style="@style/ToolButton"
+                android:contentDescription="@string/cd_clear"
+                android:src="@drawable/ic_clear" />
+
+            <ImageButton
+                android:id="@+id/btn_stylus"
+                style="@style/ToolButton"
+                android:contentDescription="@string/cd_stylus"
+                android:src="@drawable/ic_stylus" />
+
+            <View style="@style/ToolDivider" />
+
+            <ImageButton
+                android:id="@+id/btn_prev"
+                style="@style/ToolButton"
+                android:contentDescription="@string/cd_prev"
+                android:src="@drawable/ic_prev" />
+
+            <TextView
+                android:id="@+id/tv_page"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="2dp"
+                android:minWidth="40dp"
+                android:gravity="center"
+                android:text="1/1"
+                android:textColor="@color/icon_tint"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <ImageButton
+                android:id="@+id/btn_next"
+                style="@style/ToolButton"
+                android:contentDescription="@string/cd_next"
+                android:src="@drawable/ic_next" />
+
+            <ImageButton
+                android:id="@+id/btn_new_page"
+                style="@style/ToolButton"
+                android:contentDescription="@string/cd_new_page"
+                android:src="@drawable/ic_add" />
+
+            <ImageButton
+                android:id="@+id/btn_export"
+                style="@style/ToolButton"
+                android:contentDescription="@string/cd_export"
+                android:src="@drawable/ic_export" />
+        </LinearLayout>
+    </HorizontalScrollView>
+
+    <com.stylusnotes.app.DrawingView
+        android:id="@+id/drawing_view"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="@android:color/white" />
+
+</LinearLayout>
