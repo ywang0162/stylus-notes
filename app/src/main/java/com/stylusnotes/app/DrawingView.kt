@@ -8,6 +8,7 @@ import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PorterDuff
+import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
@@ -108,6 +109,18 @@ class DrawingView @JvmOverloads constructor(
         textSize = 11f * resources.displayMetrics.density
     }
     private val hudBgPaint = Paint().apply { color = Color.parseColor("#B0000000") }
+
+    // Edge guide: a subtle inset frame marking the reliable writing zone, so you
+    // are nudged away from the unreliable screen borders. Ink still registers
+    // everywhere; this only draws a margin cue.
+    var edgeGuideEnabled = true
+    private val edgeMarginPx = 16f * resources.displayMetrics.density
+    private val edgeGuidePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.parseColor("#33607D8B")
+        strokeWidth = 1.5f * resources.displayMetrics.density
+    }
+    private val edgeGuideRect = RectF()
 
     // --- input state ---
     private var mode = Mode.NONE
@@ -485,6 +498,13 @@ class DrawingView @JvmOverloads constructor(
         val frameStart = System.nanoTime()
         cache?.let { canvas.drawBitmap(it, 0f, 0f, null) } ?: canvas.drawColor(pageColor)
         drawLiveTail(canvas)
+        if (edgeGuideEnabled && width > 0 && height > 0) {
+            edgeGuideRect.set(
+                edgeMarginPx, edgeMarginPx,
+                width - edgeMarginPx, height - edgeMarginPx
+            )
+            canvas.drawRoundRect(edgeGuideRect, 10f * density, 10f * density, edgeGuidePaint)
+        }
         if (showDiagnostics) drawDiagnostics(canvas, frameStart)
     }
 
