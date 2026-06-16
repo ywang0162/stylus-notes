@@ -17,4 +17,8 @@
     <string name="cd_next">Next page</string>
     <string name="cd_new_page">New page</string>
     <string name="cd_export">Export page as image</string>
+    <string name="cd_home">Back to notes</string>
+    <string name="cd_new_note">New note</string>
+    <string name="cd_note_preview">Note preview</string>
+    <string name="empty_notes">No notes yet.\nTap + to start a new one.</string>
 </resources>

@@ -20,6 +20,14 @@
             android:paddingVertical="4dp">
 
             <ImageButton
+                android:id="@+id/btn_home"
+                style="@style/ToolButton"
+                android:contentDescription="@string/cd_home"
+                android:src="@drawable/ic_arrow_back" />
+
+            <View style="@style/ToolDivider" />
+
+            <ImageButton
                 android:id="@+id/btn_pen"
                 style="@style/ToolButton"
                 android:contentDescription="@string/cd_pen"
@@ -89,43 +97,23 @@
                 android:contentDescription="@string/cd_stylus"
                 android:src="@drawable/ic_stylus" />
 
-            <View style="@style/ToolDivider" />
-
-            <ImageButton
-                android:id="@+id/btn_prev"
-                style="@style/ToolButton"
-                android:contentDescription="@string/cd_prev"
-                android:src="@drawable/ic_prev" />
-
-            <TextView
-                android:id="@+id/tv_page"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginHorizontal="2dp"
-                android:minWidth="40dp"
-                android:gravity="center"
-                android:text="1/1"
-                android:textColor="@color/icon_tint"
-                android:textSize="14sp"
-                android:textStyle="bold" />
-
-            <ImageButton
-                android:id="@+id/btn_next"
-                style="@style/ToolButton"
-                android:contentDescription="@string/cd_next"
-                android:src="@drawable/ic_next" />
-
-            <ImageButton
-                android:id="@+id/btn_new_page"
-                style="@style/ToolButton"
-                android:contentDescription="@string/cd_new_page"
-                android:src="@drawable/ic_add" />
-
             <ImageButton
                 android:id="@+id/btn_export"
                 style="@style/ToolButton"
                 android:contentDescription="@string/cd_export"
                 android:src="@drawable/ic_export" />
+
+            <TextView
+                android:id="@+id/tv_page"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="6dp"
+                android:gravity="center"
+                android:minWidth="48dp"
+                android:text="p.1/1"
+                android:textColor="@color/icon_tint"
+                android:textSize="13sp"
+                android:textStyle="bold" />
         </LinearLayout>
     </HorizontalScrollView>
 

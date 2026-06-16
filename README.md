@@ -17,21 +17,24 @@ for your browser/file manager before sideloading, or use `adb install`.
 
 ## Features
 
-- **Pressure-sensitive ink** — line width follows stylus pressure (tunable).
-- **Palm rejection** — "stylus only" mode ignores finger and palm touches so you
-  can rest your hand on the screen while writing. Toggle it off to draw with a
-  finger.
-- **Low latency** — committed strokes are cached to a bitmap; only the live
-  stroke is redrawn each frame, and the view requests unbuffered input.
-- **Pen + eraser**, 4 ink colors (black / blue / red / green), 3 pen widths.
-- **Undo / redo**, clear page.
-- **Multi-page notebook** — flip between pages, add new pages. Pages auto-save.
-- **Export to gallery** — saves the current page as a PNG to
-  `Pictures/StylusNotes`.
+- **Finger-first handwriting** — one finger draws by default. Input is lightly
+  smoothed and the line width is modulated by drawing speed, so finger writing
+  looks natural even without pen pressure. (A stylus works the same way and
+  also uses pressure.)
+- **Two-finger scroll, infinite downward pages** — drag with two fingers to
+  scroll. Pulling past the bottom grows the note by another page automatically,
+  so there's no "add page" button — pages just keep flowing down as you write.
+- **Home screen** — all your notes are listed as a thumbnail grid. Tap to open,
+  tap **+** to start a new one, long-press to rename or delete.
+- **Optional palm rejection** — a "stylus only" toggle ignores finger/palm
+  touches for pen-only writing.
+- **Pen + eraser**, 4 ink colors (black / blue / red / green), 3 pen widths,
+  **undo / redo**, clear.
+- **Export to gallery** — saves the whole note as a PNG to `Pictures/StylusNotes`.
 
-Notes are stored as **vector strokes** (JSON, one file per page) in the app's
-private storage, so they stay small and survive restarts. Nothing leaves the
-device unless you export a PNG.
+Each note is stored as **vector strokes** (JSON) in the app's private storage,
+with a small thumbnail for the home grid, so notes stay tiny and survive
+restarts. Nothing leaves the device unless you export a PNG.
 
 ## Project layout
 
@@ -39,11 +42,13 @@ device unless you export a PNG.
 app/src/main/
 ├── AndroidManifest.xml
 ├── java/com/stylusnotes/app/
-│   ├── MainActivity.kt     # toolbar wiring, page navigation, autosave, export
-│   ├── DrawingView.kt      # custom canvas: stylus input, pressure, palm rejection
-│   ├── Stroke.kt           # vector stroke model
-│   └── NoteStorage.kt      # page persistence (JSON) + PNG export (MediaStore)
-└── res/                    # layout, icons, theme
+│   ├── HomeActivity.kt     # launcher: notes grid, new/rename/delete
+│   ├── NotesAdapter.kt     # RecyclerView adapter for the notes grid
+│   ├── NoteActivity.kt     # the editor: toolbar, autosave, thumbnail, export
+│   ├── DrawingView.kt      # scrolling canvas: finger/stylus input, two-finger pan, pages
+│   ├── Stroke.kt           # vector stroke model (document coordinates)
+│   └── NotesRepository.kt  # per-note persistence (JSON) + thumbnails + PNG export
+└── res/                    # layouts, icons, theme
 ```
 
 ## Build
@@ -98,19 +103,22 @@ screen size.
 
   ```bash
   adb shell dumpsys display | grep -i "Display Id"      # find the bottom screen's id
-  adb shell am start -n com.stylusnotes.app/.MainActivity --display <displayId>
+  adb shell am start -n com.stylusnotes.app/.HomeActivity --display <displayId>
   ```
 
 ## Tuning
 
 Most feel-related knobs live in `DrawingView.kt`:
 
-- `pressureSensitivity` (0 = constant width, 1 = fully pressure-driven; default 0.8)
+- `widthVariation` (0 = constant width, 1 = full speed/pressure-driven; default 0.85)
+- `smoothing` (input jitter damping for finger writing; default 0.4)
+- `slowDpPerMs` / `fastDpPerMs` / `taperMin` — the speed→width mapping
 - `strokeWidth` / `eraserWidth`
-- `stylusOnly` (default `true` — palm rejection on)
+- `stylusOnly` (default `false` — finger drawing on; set true for palm rejection)
 
-Pen widths and ink colors are defined in `MainActivity.kt`
-(`widthsDp` and the `selectColor` calls).
+A "page" is one screen tall; the document grows a page each time you pull past
+the bottom with two fingers. Pen widths and ink colors are defined in
+`NoteActivity.kt` (`widthsDp` and the `selectColor` calls).
 
 ## Requirements
 

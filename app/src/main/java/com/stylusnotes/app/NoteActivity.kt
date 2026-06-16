@@ -6,51 +6,63 @@ import android.os.Handler
 import android.os.Looper
 import android.view.View
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import com.stylusnotes.app.databinding.ActivityMainBinding
-import java.io.File
+import com.stylusnotes.app.databinding.ActivityNoteBinding
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-class MainActivity : AppCompatActivity() {
+class NoteActivity : AppCompatActivity() {
 
-    private lateinit var binding: ActivityMainBinding
-    private lateinit var storage: NoteStorage
+    companion object {
+        const val EXTRA_NOTE_ID = "note_id"
+    }
 
-    private lateinit var pages: MutableList<File>
-    private var pageIndex = 0
+    private lateinit var binding: ActivityNoteBinding
+    private lateinit var repo: NotesRepository
+    private lateinit var noteId: String
 
     private val density get() = resources.displayMetrics.density
     private val widthsDp = floatArrayOf(2f, 4f, 8f)
     private var widthIndex = 1
 
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val autosave = Runnable { saveCurrentPage() }
+    private val autosave = Runnable { saveNote() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        binding = ActivityMainBinding.inflate(layoutInflater)
+        binding = ActivityNoteBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        storage = NoteStorage(this)
-        pages = storage.listPages().toMutableList()
-        pageIndex = 0
+        repo = NotesRepository(this)
+        noteId = intent.getStringExtra(EXTRA_NOTE_ID) ?: run {
+            finish()
+            return
+        }
 
         val dv = binding.drawingView
         dv.strokeWidth = widthsDp[widthIndex] * density
+        dv.stylusOnly = false // finger-first by default
         dv.onContentChanged = {
             scheduleAutosave()
             updateButtons()
         }
+        dv.onViewportChanged = { updatePageIndicator() }
+
+        val content = repo.loadContent(noteId)
+        dv.loadContent(content.strokes, content.pageCount)
 
         wireToolbar()
-        loadCurrentPage()
         selectTool(DrawingView.Tool.PEN)
         selectColor(Color.BLACK)
+        updateButtons()
+        updatePageIndicator()
     }
 
     private fun wireToolbar() = with(binding) {
+        btnHome.setOnClickListener { saveNote(); finish() }
+
         btnPen.setOnClickListener { selectTool(DrawingView.Tool.PEN) }
         btnEraser.setOnClickListener { selectTool(DrawingView.Tool.ERASER) }
 
@@ -62,17 +74,10 @@ class MainActivity : AppCompatActivity() {
         btnWidth.setOnClickListener { cycleWidth() }
         btnUndo.setOnClickListener { drawingView.undo() }
         btnRedo.setOnClickListener { drawingView.redo() }
-        btnClear.setOnClickListener { drawingView.clearPage() }
-
+        btnClear.setOnClickListener { confirmClear() }
         btnStylus.setOnClickListener { toggleStylusOnly() }
-
-        btnPrev.setOnClickListener { goToPage(pageIndex - 1) }
-        btnNext.setOnClickListener { goToPage(pageIndex + 1) }
-        btnNewPage.setOnClickListener { addPage() }
-        btnExport.setOnClickListener { exportCurrentPage() }
+        btnExport.setOnClickListener { exportNote() }
     }
-
-    // ---- Tools --------------------------------------------------------------
 
     private fun selectTool(tool: DrawingView.Tool) {
         binding.drawingView.tool = tool
@@ -94,30 +99,44 @@ class MainActivity : AppCompatActivity() {
     private fun cycleWidth() {
         widthIndex = (widthIndex + 1) % widthsDp.size
         binding.drawingView.strokeWidth = widthsDp[widthIndex] * density
-        val label = when (widthIndex) { 0 -> "Thin"; 1 -> "Medium"; else -> "Thick" }
-        toast("Pen: $label")
+        toast("Pen: " + when (widthIndex) { 0 -> "Thin"; 1 -> "Medium"; else -> "Thick" })
     }
 
     private fun toggleStylusOnly() {
         val on = !binding.drawingView.stylusOnly
         binding.drawingView.stylusOnly = on
         binding.btnStylus.isSelected = on
-        toast(if (on) "Stylus only (palm rejection on)" else "Finger drawing allowed")
+        toast(if (on) "Stylus only (palm rejection on)" else "Finger drawing on")
     }
 
-    // ---- Pages --------------------------------------------------------------
-
-    private fun loadCurrentPage() {
-        binding.drawingView.setStrokes(storage.loadPage(pages[pageIndex]))
-        updatePageIndicator()
-        updateButtons()
+    private fun confirmClear() {
+        AlertDialog.Builder(this)
+            .setTitle("Clear note?")
+            .setMessage("This erases everything in this note.")
+            .setPositiveButton("Clear") { _, _ -> binding.drawingView.clearAll() }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
-    private fun saveCurrentPage() {
-        mainHandler.removeCallbacks(autosave)
-        if (pageIndex in pages.indices) {
-            storage.savePage(pages[pageIndex], binding.drawingView.getStrokes())
+    private fun exportNote() {
+        val bmp = binding.drawingView.renderFull()
+        if (bmp == null) {
+            toast("Nothing to export yet")
+            return
         }
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val uri = repo.exportPng(bmp, "note_$stamp")
+        toast(if (uri != null) "Saved to Pictures/StylusNotes" else "Export failed")
+    }
+
+    private fun updatePageIndicator() {
+        binding.tvPage.text = "p.${binding.drawingView.currentPage()}/${binding.drawingView.pageCount}"
+    }
+
+    private fun updateButtons() = with(binding) {
+        btnUndo.isEnabled = drawingView.canUndo
+        btnRedo.isEnabled = drawingView.canRedo
+        listOf<View>(btnUndo, btnRedo).forEach { it.alpha = if (it.isEnabled) 1f else 0.35f }
     }
 
     private fun scheduleAutosave() {
@@ -125,57 +144,18 @@ class MainActivity : AppCompatActivity() {
         mainHandler.postDelayed(autosave, 700)
     }
 
-    private fun goToPage(index: Int) {
-        if (index !in pages.indices || index == pageIndex) return
-        saveCurrentPage()
-        pageIndex = index
-        loadCurrentPage()
+    private fun saveNote() {
+        mainHandler.removeCallbacks(autosave)
+        val dv = binding.drawingView
+        val content = NoteContent(dv.getStrokes().toMutableList(), dv.pageCount)
+        val thumb = dv.renderThumbnail((120 * density).toInt())
+        repo.saveContent(noteId, content, thumb)
     }
 
-    private fun addPage() {
-        saveCurrentPage()
-        val file = storage.createPage()
-        pages.add(file)
-        pageIndex = pages.lastIndex
-        loadCurrentPage()
-        toast("New page")
-    }
-
-    private fun updatePageIndicator() {
-        binding.tvPage.text = "${pageIndex + 1}/${pages.size}"
-    }
-
-    // ---- Export -------------------------------------------------------------
-
-    private fun exportCurrentPage() {
-        val bmp = binding.drawingView.snapshot()
-        if (bmp == null) {
-            toast("Nothing to export yet")
-            return
-        }
-        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        val uri = storage.exportPng(bmp, "note_${pageIndex + 1}_$stamp")
-        toast(if (uri != null) "Saved to Pictures/StylusNotes" else "Export failed")
-    }
-
-    // ---- Misc ---------------------------------------------------------------
-
-    private fun updateButtons() = with(binding) {
-        btnUndo.isEnabled = drawingView.canUndo
-        btnRedo.isEnabled = drawingView.canRedo
-        btnPrev.isEnabled = pageIndex > 0
-        btnNext.isEnabled = pageIndex < pages.size - 1
-        listOf<View>(btnUndo, btnRedo, btnPrev, btnNext).forEach {
-            it.alpha = if (it.isEnabled) 1f else 0.35f
-        }
-    }
-
-    private fun toast(msg: String) {
-        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
-    }
+    private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 
     override fun onPause() {
         super.onPause()
-        saveCurrentPage()
+        saveNote()
     }
 }
