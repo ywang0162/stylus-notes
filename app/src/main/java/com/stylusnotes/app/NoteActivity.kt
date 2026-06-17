@@ -47,8 +47,10 @@ class NoteActivity : AppCompatActivity() {
         dv.onContentChanged = {
             scheduleAutosave()
             updateButtons()
+            if (dv.zoomWriteMode) binding.zoomWritePanel.invalidate()
         }
         dv.onViewportChanged = { updateViewportLabels() }
+        dv.onZoomBoxChanged = { binding.zoomWritePanel.invalidate() }
 
         val content = repo.loadContent(noteId)
         dv.loadContent(content.strokes, content.pageCount)
@@ -81,6 +83,28 @@ class NoteActivity : AppCompatActivity() {
         btnZoomOut.setOnClickListener { drawingView.zoomBy(0.8f) }
         btnZoomIn.setOnClickListener { drawingView.zoomBy(1.25f) }
         tvZoom.setOnClickListener { drawingView.resetZoom() } // tap % to reset to 100%
+
+        btnZoomWrite.setOnClickListener { toggleZoomWrite() }
+    }
+
+    private fun toggleZoomWrite() = with(binding) {
+        if (drawingView.zoomWriteMode) {
+            drawingView.exitZoomWrite()
+            zoomWritePanel.visibility = View.GONE
+            zoomWriteDivider.visibility = View.GONE
+            btnZoomWrite.isSelected = false
+        } else {
+            zoomWritePanel.source = drawingView
+            zoomWritePanel.visibility = View.VISIBLE
+            zoomWriteDivider.visibility = View.VISIBLE
+            btnZoomWrite.isSelected = true
+            zoomWritePanel.post {
+                if (zoomWritePanel.width > 0) {
+                    drawingView.enterZoomWrite(zoomWritePanel.height.toFloat() / zoomWritePanel.width)
+                }
+                zoomWritePanel.invalidate()
+            }
+        }
     }
 
     private fun selectTool(tool: DrawingView.Tool) {

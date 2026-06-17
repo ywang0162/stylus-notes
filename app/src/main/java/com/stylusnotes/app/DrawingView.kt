@@ -8,6 +8,7 @@ import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PorterDuff
+import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
@@ -31,7 +32,7 @@ class DrawingView @JvmOverloads constructor(
 ) : View(context, attrs) {
 
     enum class Tool { PEN, ERASER }
-    private enum class Mode { NONE, DRAW, TRANSFORM }
+    private enum class Mode { NONE, DRAW, TRANSFORM, BOXMOVE }
 
     var tool: Tool = Tool.PEN
     var strokeColor: Int = Color.BLACK
@@ -43,6 +44,12 @@ class DrawingView @JvmOverloads constructor(
 
     var onContentChanged: (() -> Unit)? = null
     var onViewportChanged: (() -> Unit)? = null
+
+    // Zoom-write: a movable box on the page that the writing panel projects into.
+    var zoomWriteMode = false
+        private set
+    val zoomWriteBox = RectF()
+    var onZoomBoxChanged: (() -> Unit)? = null
 
     private val density = resources.displayMetrics.density
     private val pageColor = Color.WHITE
@@ -78,11 +85,21 @@ class DrawingView @JvmOverloads constructor(
         pathEffect = DashPathEffect(floatArrayOf(12f, 10f), 0f)
     }
     private val segPath = Path()
+    private val boxStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.parseColor("#2962FF")
+    }
+    private val boxFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.parseColor("#142962FF")
+    }
 
     private var mode = Mode.NONE
     private var liveSegDrawn = 0
     private var lastFocusX = 0f
     private var lastFocusY = 0f
+    private var boxDragX = 0f
+    private var boxDragY = 0f
 
     // Finger optimization: ignore samples closer than this (in screen px) to the
     // last one. Drops finger micro-jitter and point bloat without adding lag, so
@@ -113,6 +130,7 @@ class DrawingView @JvmOverloads constructor(
         strokeWidth = 4f * density
         eraserWidth = 30f * density
         separatorPaint.strokeWidth = 1f * density
+        boxStrokePaint.strokeWidth = 2f * density
         isFocusable = true
         isHapticFeedbackEnabled = false
     }
@@ -205,7 +223,9 @@ class DrawingView @JvmOverloads constructor(
         val c = Canvas(bmp)
         c.drawColor(pageColor)
         c.clipRect(0f, 0f, targetWidth.toFloat(), th.toFloat())
-        for (s in strokes) if (s.minY <= pageHeightPx) drawStrokeFull(c, s, sc, 0f, 0f)
+        for (s in strokes) if (s.minY <= pageHeightPx) {
+            StrokeRenderer.drawFull(c, s, sc, 0f, 0f, pageColor, paint, segPath)
+        }
         return bmp
     }
 
@@ -224,7 +244,7 @@ class DrawingView @JvmOverloads constructor(
             val y = p * pageHeightPx * sc
             c.drawLine(0f, y, w.toFloat(), y, separatorPaint)
         }
-        for (s in strokes) drawStrokeFull(c, s, sc, 0f, 0f)
+        for (s in strokes) StrokeRenderer.drawFull(c, s, sc, 0f, 0f, pageColor, paint, segPath)
         return bmp
     }
 
@@ -234,6 +254,13 @@ class DrawingView @JvmOverloads constructor(
         scaleDetector.onTouchEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                if (zoomWriteMode) {
+                    // In zoom-write mode the page is for positioning the box, not drawing.
+                    mode = Mode.BOXMOVE
+                    boxDragX = event.x
+                    boxDragY = event.y
+                    return true
+                }
                 if (stylusOnly && event.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER) {
                     mode = Mode.NONE
                     return true
@@ -271,6 +298,11 @@ class DrawingView @JvmOverloads constructor(
                     pan(fx - lastFocusX, fy - lastFocusY)
                     lastFocusX = fx
                     lastFocusY = fy
+                }
+                Mode.BOXMOVE -> if (event.pointerCount == 1) {
+                    moveZoomBox((event.x - boxDragX) / scale, (event.y - boxDragY) / scale)
+                    boxDragX = event.x
+                    boxDragY = event.y
                 }
                 Mode.NONE -> {}
             }
@@ -336,8 +368,8 @@ class DrawingView @JvmOverloads constructor(
         bakeNewSegments(s)
         val c = cacheCanvas
         if (c != null) {
-            if (s.size == 1) drawDot(c, s, scale, transX, transY)
-            else drawClosing(c, s, scale, transX, transY)
+            if (s.size == 1) StrokeRenderer.drawDot(c, s, scale, transX, transY, pageColor, paint)
+            else StrokeRenderer.drawClosing(c, s, scale, transX, transY, pageColor, paint, segPath)
         }
         if (s.size > 0) {
             strokes.add(s)
@@ -362,7 +394,7 @@ class DrawingView @JvmOverloads constructor(
         val c = cacheCanvas ?: return
         repeat(InkMath.pendingSegments(liveSegDrawn, s.size)) {
             val i = liveSegDrawn + 1
-            drawSegment(c, s, i, scale, transX, transY)
+            StrokeRenderer.drawSegment(c, s, i, scale, transX, transY, pageColor, paint, segPath)
             liveSegDrawn = i
         }
     }
@@ -429,7 +461,9 @@ class DrawingView @JvmOverloads constructor(
             }
         }
         for (s in strokes) {
-            if (s.maxY >= topDoc && s.minY <= botDoc) drawStrokeFull(c, s, scale, transX, transY)
+            if (s.maxY >= topDoc && s.minY <= botDoc) {
+                StrokeRenderer.drawFull(c, s, scale, transX, transY, pageColor, paint, segPath)
+            }
         }
         invalidate()
     }
@@ -441,63 +475,65 @@ class DrawingView @JvmOverloads constructor(
         // finger instead of trailing half a segment behind it.
         val s = current
         if (mode == Mode.DRAW && s != null) {
-            if (s.size == 1) drawDot(canvas, s, scale, transX, transY)
-            else drawClosing(canvas, s, scale, transX, transY)
+            if (s.size == 1) StrokeRenderer.drawDot(canvas, s, scale, transX, transY, pageColor, paint)
+            else StrokeRenderer.drawClosing(canvas, s, scale, transX, transY, pageColor, paint, segPath)
         }
+        if (zoomWriteMode) drawZoomBox(canvas)
     }
 
-    // ---- Stroke drawing (quadratic-midpoint smoothing) ----------------------
+    // ---- Zoom-write mode ----------------------------------------------------
 
-    private fun drawStrokeFull(canvas: Canvas, s: Stroke, sc: Float, tx: Float, ty: Float) {
-        val n = s.size
-        if (n == 0) return
-        if (n == 1) {
-            drawDot(canvas, s, sc, tx, ty)
-            return
-        }
-        for (i in 1 until n) drawSegment(canvas, s, i, sc, tx, ty)
-        drawClosing(canvas, s, sc, tx, ty)
+    /** Turns on the movable write box, centered on the current view. [panelAspect]
+     *  is the writing panel's height/width, so the box matches its shape. */
+    fun enterZoomWrite(panelAspect: Float) {
+        if (width <= 0) return
+        val boxW = width * 0.4f
+        val boxH = boxW * panelAspect
+        val cx = (width / 2f - transX) / scale
+        val cy = (height / 2f - transY) / scale
+        val l = (cx - boxW / 2f).coerceIn(0f, (width - boxW).coerceAtLeast(0f))
+        val maxT = (pageCount * pageHeightPx - boxH).coerceAtLeast(0f)
+        val t = (cy - boxH / 2f).coerceIn(0f, maxT)
+        zoomWriteBox.set(l, t, l + boxW, t + boxH)
+        zoomWriteMode = true
+        invalidate()
+        onZoomBoxChanged?.invoke()
     }
 
-    private fun drawSegment(canvas: Canvas, s: Stroke, i: Int, sc: Float, tx: Float, ty: Float) {
-        paint.color = if (s.isEraser) pageColor else s.color
-        paint.strokeWidth = (s.baseWidth * sc).coerceAtLeast(0.7f)
-        val x0 = s.xs[i - 1] * sc + tx; val y0 = s.ys[i - 1] * sc + ty
-        val x1 = s.xs[i] * sc + tx; val y1 = s.ys[i] * sc + ty
-        val m1x = (x0 + x1) / 2f; val m1y = (y0 + y1) / 2f
-        segPath.reset()
-        if (i == 1) {
-            segPath.moveTo(x0, y0)
-            segPath.lineTo(m1x, m1y)
-        } else {
-            val xp = s.xs[i - 2] * sc + tx; val yp = s.ys[i - 2] * sc + ty
-            segPath.moveTo((xp + x0) / 2f, (yp + y0) / 2f)
-            segPath.quadTo(x0, y0, m1x, m1y)
-        }
-        canvas.drawPath(segPath, paint)
+    fun exitZoomWrite() {
+        zoomWriteMode = false
+        invalidate()
     }
 
-    private fun drawClosing(canvas: Canvas, s: Stroke, sc: Float, tx: Float, ty: Float) {
-        val n = s.size
-        if (n < 2) return
-        val i = n - 1
-        paint.color = if (s.isEraser) pageColor else s.color
-        paint.strokeWidth = (s.baseWidth * sc).coerceAtLeast(0.7f)
-        val x0 = s.xs[i - 1] * sc + tx; val y0 = s.ys[i - 1] * sc + ty
-        val x1 = s.xs[i] * sc + tx; val y1 = s.ys[i] * sc + ty
-        segPath.reset()
-        segPath.moveTo((x0 + x1) / 2f, (y0 + y1) / 2f)
-        segPath.lineTo(x1, y1)
-        canvas.drawPath(segPath, paint)
+    /** Moves the write box by a document-space delta, clamped to the page. */
+    private fun moveZoomBox(docDx: Float, docDy: Float) {
+        val w = zoomWriteBox.width()
+        val h = zoomWriteBox.height()
+        val l = (zoomWriteBox.left + docDx).coerceIn(0f, (width - w).coerceAtLeast(0f))
+        val maxT = (pageCount * pageHeightPx - h).coerceAtLeast(0f)
+        val t = (zoomWriteBox.top + docDy).coerceIn(0f, maxT)
+        zoomWriteBox.set(l, t, l + w, t + h)
+        invalidate()
+        onZoomBoxChanged?.invoke()
     }
 
-    private fun drawDot(canvas: Canvas, s: Stroke, sc: Float, tx: Float, ty: Float) {
-        paint.color = if (s.isEraser) pageColor else s.color
-        paint.style = Paint.Style.FILL
-        canvas.drawCircle(
-            s.xs[0] * sc + tx, s.ys[0] * sc + ty,
-            (s.baseWidth * sc).coerceAtLeast(0.7f) / 2f, paint
-        )
-        paint.style = Paint.Style.STROKE
+    /** Adds a finished stroke (document coordinates) from the write panel. */
+    fun addDocStroke(s: Stroke) {
+        if (s.size == 0) return
+        strokes.add(s)
+        redoStack.clear()
+        ensurePagesCoverStrokes()
+        clampTransform()
+        rebuildCache()
+        onContentChanged?.invoke()
+    }
+
+    private fun drawZoomBox(canvas: Canvas) {
+        val l = zoomWriteBox.left * scale + transX
+        val t = zoomWriteBox.top * scale + transY
+        val r = zoomWriteBox.right * scale + transX
+        val b = zoomWriteBox.bottom * scale + transY
+        canvas.drawRect(l, t, r, b, boxFillPaint)
+        canvas.drawRect(l, t, r, b, boxStrokePaint)
     }
 }

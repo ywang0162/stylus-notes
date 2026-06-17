@@ -22,5 +22,6 @@
     <string name="cd_note_preview">Note preview</string>
     <string name="cd_zoom_in">Zoom in</string>
     <string name="cd_zoom_out">Zoom out</string>
+    <string name="cd_zoom_write">Zoom &amp; write</string>
     <string name="empty_notes">No notes yet.\nTap + to start a new one.</string>
 </resources>

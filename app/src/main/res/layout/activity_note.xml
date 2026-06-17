@@ -98,6 +98,12 @@
                 android:src="@drawable/ic_stylus" />
 
             <ImageButton
+                android:id="@+id/btn_zoom_write"
+                style="@style/ToolButton"
+                android:contentDescription="@string/cd_zoom_write"
+                android:src="@drawable/ic_zoom_write" />
+
+            <ImageButton
                 android:id="@+id/btn_export"
                 style="@style/ToolButton"
                 android:contentDescription="@string/cd_export"
@@ -154,5 +160,20 @@
         android:layout_height="0dp"
         android:layout_weight="1"
         android:background="@android:color/white" />
+
+    <View
+        android:id="@+id/zoom_write_divider"
+        android:layout_width="match_parent"
+        android:layout_height="2dp"
+        android:background="@color/accent"
+        android:visibility="gone" />
+
+    <com.stylusnotes.app.ZoomWritePanel
+        android:id="@+id/zoom_write_panel"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="@android:color/white"
+        android:visibility="gone" />
 
 </LinearLayout>
