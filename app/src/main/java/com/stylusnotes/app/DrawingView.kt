@@ -436,6 +436,14 @@ class DrawingView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         cache?.let { canvas.drawBitmap(it, 0f, 0f, null) } ?: canvas.drawColor(pageColor)
+        // The cache is baked only up to the last segment midpoint. Draw the live
+        // tip out to the latest tracked point each frame so the ink reaches the
+        // finger instead of trailing half a segment behind it.
+        val s = current
+        if (mode == Mode.DRAW && s != null) {
+            if (s.size == 1) drawDot(canvas, s, scale, transX, transY)
+            else drawClosing(canvas, s, scale, transX, transY)
+        }
     }
 
     // ---- Stroke drawing (quadratic-midpoint smoothing) ----------------------
