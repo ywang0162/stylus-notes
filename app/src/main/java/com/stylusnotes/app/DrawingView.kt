@@ -66,6 +66,12 @@ class DrawingView @JvmOverloads constructor(
     var pageCount = 1
         private set
 
+    // The canvas is wider than the viewport so the area visible when fully zoomed
+    // out is all usable. The original page column stays centered within it.
+    private var docWidthPx = 0f
+    private var docLeft = 0f
+    private val docRight get() = docLeft + docWidthPx
+
     // View transform: screen = doc * scale + trans.
     private var scale = 1f
     private var transX = 0f
@@ -259,12 +265,13 @@ class DrawingView @JvmOverloads constructor(
 
     /** Full-document bitmap for PNG export (down-scaled if very tall). */
     fun renderFull(): Bitmap? {
-        if (width <= 0 || pageHeightPx <= 0f) return null
+        if (width <= 0 || pageHeightPx <= 0f || docWidthPx <= 0f) return null
         val docHeight = pageCount * pageHeightPx
         val maxDim = 8000f
-        val sc = if (docHeight > maxDim) maxDim / docHeight else 1f
-        val w = (width * sc).toInt().coerceAtLeast(1)
+        val sc = minOf(1f, maxDim / docHeight, maxDim / docWidthPx)
+        val w = (docWidthPx * sc).toInt().coerceAtLeast(1)
         val h = (docHeight * sc).toInt().coerceAtLeast(1)
+        val tx = -docLeft * sc
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         c.drawColor(pageColor)
@@ -272,7 +279,7 @@ class DrawingView @JvmOverloads constructor(
             val y = p * pageHeightPx * sc
             c.drawLine(0f, y, w.toFloat(), y, separatorPaint)
         }
-        for (s in strokes) StrokeRenderer.drawFull(c, s, sc, 0f, 0f, pageColor, paint, segPath)
+        for (s in strokes) StrokeRenderer.drawFull(c, s, sc, tx, 0f, pageColor, paint, segPath)
         return bmp
     }
 
@@ -462,7 +469,7 @@ class DrawingView @JvmOverloads constructor(
 
     private fun clampTransform() {
         if (width <= 0 || height <= 0) return
-        transX = InkMath.clampTransX(transX, scale, width.toFloat(), width)
+        transX = InkMath.clampTransX(transX, scale, docLeft, docWidthPx, width)
         val contentH = pageCount * pageHeightPx * scale
         transY = if (contentH <= height) 0f else transY.coerceIn(height - contentH, 0f)
     }
@@ -481,6 +488,10 @@ class DrawingView @JvmOverloads constructor(
         super.onSizeChanged(w, h, oldw, oldh)
         if (w <= 0 || h <= 0) return
         pageHeightPx = h.toFloat()
+        // At the minimum zoom the canvas exactly fills the viewport width (no dead
+        // margins); the original page column [0, w] stays centered within it.
+        docWidthPx = w / minScale
+        docLeft = -(docWidthPx - w) / 2f
         ensurePagesCoverStrokes()
         clampTransform()
         cache = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -498,7 +509,7 @@ class DrawingView @JvmOverloads constructor(
             val docY = p * pageHeightPx
             if (docY in topDoc..botDoc) {
                 val y = docY * scale + transY
-                c.drawLine(0f, y, width.toFloat(), y, separatorPaint)
+                c.drawLine(docLeft * scale + transX, y, docRight * scale + transX, y, separatorPaint)
             }
         }
         for (s in strokes) {
@@ -533,7 +544,7 @@ class DrawingView @JvmOverloads constructor(
         val boxH = boxW * panelAspect
         val cx = (width / 2f - transX) / scale
         val cy = (height / 2f - transY) / scale
-        val l = (cx - boxW / 2f).coerceIn(0f, (width - boxW).coerceAtLeast(0f))
+        val l = (cx - boxW / 2f).coerceIn(docLeft, (docRight - boxW).coerceAtLeast(docLeft))
         val maxT = (pageCount * pageHeightPx - boxH).coerceAtLeast(0f)
         val t = (cy - boxH / 2f).coerceIn(0f, maxT)
         zoomWriteBox.set(l, t, l + boxW, t + boxH)
@@ -580,7 +591,7 @@ class DrawingView @JvmOverloads constructor(
         if (boxAspect <= 0f) return
         val leftScreen = zoomWriteBox.left * scale + transX
         val minW = width * 0.15f
-        val fitW = (width - zoomWriteBox.left)
+        val fitW = (docRight - zoomWriteBox.left)
         val fitH = ((pageCount * pageHeightPx - zoomWriteBox.top) / boxAspect)
         val maxW = minOf(width * 0.95f, fitW, fitH).coerceAtLeast(minW)
         val newW = ((screenX - leftScreen) / scale).coerceIn(minW, maxW)
@@ -597,7 +608,7 @@ class DrawingView @JvmOverloads constructor(
     private fun moveZoomBox(docDx: Float, docDy: Float) {
         val w = zoomWriteBox.width()
         val h = zoomWriteBox.height()
-        val l = (zoomWriteBox.left + docDx).coerceIn(0f, (width - w).coerceAtLeast(0f))
+        val l = (zoomWriteBox.left + docDx).coerceIn(docLeft, (docRight - w).coerceAtLeast(docLeft))
         val maxT = (pageCount * pageHeightPx - h).coerceAtLeast(0f)
         val t = (zoomWriteBox.top + docDy).coerceIn(0f, maxT)
         zoomWriteBox.set(l, t, l + w, t + h)

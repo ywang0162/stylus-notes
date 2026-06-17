@@ -26,14 +26,18 @@ object InkMath {
     fun coerceScale(scale: Float, min: Float, max: Float): Float = scale.coerceIn(min, max)
 
     /**
-     * Horizontal translation that keeps the (single-axis) page within view:
-     * centered when the content is narrower than the viewport, otherwise pinned
-     * so its edges can't drift inside the viewport.
+     * Horizontal translation that keeps the canvas within view. The canvas spans
+     * document x in [docLeft, docLeft + docWidth]; it is centered when narrower
+     * than the viewport, otherwise pinned so its edges can't drift inside.
      */
-    fun clampTransX(transX: Float, scale: Float, docWidth: Float, viewWidth: Int): Float {
+    fun clampTransX(transX: Float, scale: Float, docLeft: Float, docWidth: Float, viewWidth: Int): Float {
         val contentW = docWidth * scale
-        return if (contentW <= viewWidth) (viewWidth - contentW) / 2f
-        else transX.coerceIn(viewWidth - contentW, 0f)
+        return if (contentW <= viewWidth) {
+            (viewWidth - contentW) / 2f - docLeft * scale
+        } else {
+            val docRight = docLeft + docWidth
+            transX.coerceIn(viewWidth - docRight * scale, -docLeft * scale)
+        }
     }
 
     /**

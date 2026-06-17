@@ -50,16 +50,26 @@ class InkMathTest {
 
     @Test
     fun narrowerThanViewportCentersHorizontally() {
-        // content width = 500 * 1 = 500 in a 1000px viewport -> centered at 250
-        assertEquals(250f, InkMath.clampTransX(transX = -300f, scale = 1f, docWidth = 500f, viewWidth = 1000), 1e-3f)
+        // origin-0 canvas, width 500 in a 1000px viewport -> centered at 250
+        assertEquals(250f, InkMath.clampTransX(-300f, 1f, docLeft = 0f, docWidth = 500f, viewWidth = 1000), 1e-3f)
     }
 
     @Test
     fun widerThanViewportPinsToEdges() {
-        // content width = 1000 * 2 = 2000 in a 1000px viewport -> transX in [-1000, 0]
-        assertEquals(0f, InkMath.clampTransX(50f, 2f, 1000f, 1000), 1e-3f)
-        assertEquals(-1000f, InkMath.clampTransX(-9999f, 2f, 1000f, 1000), 1e-3f)
-        assertEquals(-400f, InkMath.clampTransX(-400f, 2f, 1000f, 1000), 1e-3f)
+        // origin-0 canvas, content width 2000 in a 1000px viewport -> transX in [-1000, 0]
+        assertEquals(0f, InkMath.clampTransX(50f, 2f, 0f, 1000f, 1000), 1e-3f)
+        assertEquals(-1000f, InkMath.clampTransX(-9999f, 2f, 0f, 1000f, 1000), 1e-3f)
+        assertEquals(-400f, InkMath.clampTransX(-400f, 2f, 0f, 1000f, 1000), 1e-3f)
+    }
+
+    @Test
+    fun offsetCanvasCentersAroundItsMiddle() {
+        // Canvas [-250, 750] (width 1000) at scale 0.5 -> content 500 fills a 500px
+        // viewport with its left edge at screen 0.
+        val t = InkMath.clampTransX(0f, 0.5f, docLeft = -250f, docWidth = 1000f, viewWidth = 500)
+        assertEquals(125f, t, 1e-3f)
+        // left edge of canvas maps to screen 0: docLeft*scale + t == 0
+        assertEquals(0f, -250f * 0.5f + t, 1e-3f)
     }
 
     @Test
