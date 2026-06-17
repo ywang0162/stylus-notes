@@ -72,19 +72,17 @@ class NotesRepository(context: Context) {
         return try {
             val root = JSONObject(file.readText())
             val content = NoteContent(pageCount = root.optInt("pageCount", 1).coerceAtLeast(1))
+            // fmt 2 stores point pairs (x,y); older files stored triples (x,y,weight).
+            val stride = if (root.optInt("fmt", 1) >= 2) 2 else 3
             val arr = root.optJSONArray("strokes") ?: JSONArray()
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
                 val stroke = Stroke(o.getInt("c"), o.getDouble("w").toFloat(), o.getBoolean("e"))
                 val pts = o.getJSONArray("pts")
                 var j = 0
-                while (j + 2 < pts.length()) {
-                    stroke.addPoint(
-                        pts.getDouble(j).toFloat(),
-                        pts.getDouble(j + 1).toFloat(),
-                        pts.getDouble(j + 2).toFloat()
-                    )
-                    j += 3
+                while (j + 1 < pts.length()) {
+                    stroke.addPoint(pts.getDouble(j).toFloat(), pts.getDouble(j + 1).toFloat())
+                    j += stride
                 }
                 content.strokes.add(stroke)
             }
@@ -102,7 +100,6 @@ class NotesRepository(context: Context) {
             for (i in 0 until s.size) {
                 pts.put(s.xs[i].toDouble())
                 pts.put(s.ys[i].toDouble())
-                pts.put(s.ps[i].toDouble())
             }
             arr.put(
                 JSONObject()
@@ -113,7 +110,7 @@ class NotesRepository(context: Context) {
             )
         }
         File(dir, "content.json").writeText(
-            JSONObject().put("pageCount", content.pageCount).put("strokes", arr).toString()
+            JSONObject().put("fmt", 2).put("pageCount", content.pageCount).put("strokes", arr).toString()
         )
         readMeta(id)?.let { writeMeta(it.copy(updatedAt = System.currentTimeMillis())) }
         if (thumbnail != null) {
