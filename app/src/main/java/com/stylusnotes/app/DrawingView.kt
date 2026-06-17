@@ -32,7 +32,7 @@ class DrawingView @JvmOverloads constructor(
 ) : View(context, attrs) {
 
     enum class Tool { PEN, ERASER }
-    private enum class Mode { NONE, DRAW, TRANSFORM, BOXMOVE }
+    private enum class Mode { NONE, DRAW, TRANSFORM, BOXMOVE, BOXRESIZE }
 
     var tool: Tool = Tool.PEN
     var strokeColor: Int = Color.BLACK
@@ -93,6 +93,13 @@ class DrawingView @JvmOverloads constructor(
         style = Paint.Style.FILL
         color = Color.parseColor("#142962FF")
     }
+    private val boxHandlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.parseColor("#2962FF")
+    }
+    private val boxHandleHitPx = 28f * density
+    private val boxHandleRadiusPx = 8f * density
+    private var boxAspect = 1f
 
     private var mode = Mode.NONE
     private var liveSegDrawn = 0
@@ -255,8 +262,14 @@ class DrawingView @JvmOverloads constructor(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 if (zoomWriteMode) {
-                    // In zoom-write mode the page is for positioning the box, not drawing.
-                    mode = Mode.BOXMOVE
+                    // In zoom-write mode the page positions/resizes the box, not draws.
+                    val brx = zoomWriteBox.right * scale + transX
+                    val bry = zoomWriteBox.bottom * scale + transY
+                    mode = if (hypot(event.x - brx, event.y - bry) <= boxHandleHitPx) {
+                        Mode.BOXRESIZE
+                    } else {
+                        Mode.BOXMOVE
+                    }
                     boxDragX = event.x
                     boxDragY = event.y
                     return true
@@ -303,6 +316,9 @@ class DrawingView @JvmOverloads constructor(
                     moveZoomBox((event.x - boxDragX) / scale, (event.y - boxDragY) / scale)
                     boxDragX = event.x
                     boxDragY = event.y
+                }
+                Mode.BOXRESIZE -> if (event.pointerCount == 1) {
+                    resizeZoomBox(event.x, event.y)
                 }
                 Mode.NONE -> {}
             }
@@ -487,6 +503,7 @@ class DrawingView @JvmOverloads constructor(
      *  is the writing panel's height/width, so the box matches its shape. */
     fun enterZoomWrite(panelAspect: Float) {
         if (width <= 0) return
+        boxAspect = panelAspect
         val boxW = width * 0.4f
         val boxH = boxW * panelAspect
         val cx = (width / 2f - transX) / scale
@@ -503,6 +520,26 @@ class DrawingView @JvmOverloads constructor(
     fun exitZoomWrite() {
         zoomWriteMode = false
         invalidate()
+    }
+
+    /** Resizes the box by dragging its bottom-right corner toward [screenX,screenY].
+     *  Aspect stays locked to the panel and the top-left corner is the anchor.
+     *  Smaller box = more magnification; larger box = less. */
+    private fun resizeZoomBox(screenX: Float, screenY: Float) {
+        if (boxAspect <= 0f) return
+        val leftScreen = zoomWriteBox.left * scale + transX
+        val minW = width * 0.15f
+        val fitW = (width - zoomWriteBox.left)
+        val fitH = ((pageCount * pageHeightPx - zoomWriteBox.top) / boxAspect)
+        val maxW = minOf(width * 0.95f, fitW, fitH).coerceAtLeast(minW)
+        val newW = ((screenX - leftScreen) / scale).coerceIn(minW, maxW)
+        val newH = newW * boxAspect
+        zoomWriteBox.set(
+            zoomWriteBox.left, zoomWriteBox.top,
+            zoomWriteBox.left + newW, zoomWriteBox.top + newH
+        )
+        invalidate()
+        onZoomBoxChanged?.invoke()
     }
 
     /** Moves the write box by a document-space delta, clamped to the page. */
@@ -535,5 +572,7 @@ class DrawingView @JvmOverloads constructor(
         val b = zoomWriteBox.bottom * scale + transY
         canvas.drawRect(l, t, r, b, boxFillPaint)
         canvas.drawRect(l, t, r, b, boxStrokePaint)
+        // Resize handle at the bottom-right corner.
+        canvas.drawCircle(r, b, boxHandleRadiusPx, boxHandlePaint)
     }
 }
