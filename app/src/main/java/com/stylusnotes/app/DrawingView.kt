@@ -12,6 +12,8 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
+import kotlin.math.hypot
+import kotlin.math.roundToInt
 
 /**
  * A minimal handwriting surface: one finger (or stylus) draws, two fingers
@@ -81,6 +83,15 @@ class DrawingView @JvmOverloads constructor(
     private var liveSegDrawn = 0
     private var lastFocusX = 0f
     private var lastFocusY = 0f
+
+    // Finger optimization: ignore samples closer than this (in screen px) to the
+    // last one. Drops finger micro-jitter and point bloat without adding lag, so
+    // lines stay clean on the small screen. Filtering in screen space means high
+    // zoom still captures fine detail.
+    private val minSampleDistPx = 1.2f * density
+    private var lastAddX = 0f
+    private var lastAddY = 0f
+    private var haveLastAdd = false
 
     private val scaleDetector = ScaleGestureDetector(
         context,
@@ -161,6 +172,28 @@ class DrawingView @JvmOverloads constructor(
         if (pageHeightPx <= 0f) return 1
         val centerDocY = (height / 2f - transY) / scale
         return (centerDocY / pageHeightPx).toInt().coerceIn(0, pageCount - 1) + 1
+    }
+
+    /** Current zoom as a percentage (100 = actual size). */
+    fun zoomPercent(): Int = (scale * 100f).roundToInt()
+
+    /** Zoom in/out by [factor] about the viewport center (for top-bar buttons). */
+    fun zoomBy(factor: Float) = applyZoom(scale * factor, width / 2f, height / 2f)
+
+    /** Reset to 100% (actual size). */
+    fun resetZoom() = applyZoom(1f, width / 2f, height / 2f)
+
+    private fun applyZoom(targetScale: Float, focusX: Float, focusY: Float) {
+        val newScale = InkMath.coerceScale(targetScale, minScale, maxScale)
+        if (newScale == scale) return
+        val ratio = newScale / scale
+        transX = InkMath.zoomTranslation(focusX, transX, ratio)
+        transY = InkMath.zoomTranslation(focusY, transY, ratio)
+        scale = newScale
+        clampTransform()
+        rebuildCache()
+        invalidate()
+        onViewportChanged?.invoke()
     }
 
     /** Small bitmap of the first page, for the home-screen thumbnail. */
@@ -291,6 +324,7 @@ class DrawingView @JvmOverloads constructor(
 
     private fun beginStroke(event: MotionEvent) {
         val s = Stroke(strokeColor, strokeWidth, tool == Tool.ERASER)
+        haveLastAdd = false
         addSample(event.x, event.y, s)
         liveSegDrawn = 0
         current = s
@@ -298,7 +332,7 @@ class DrawingView @JvmOverloads constructor(
 
     private fun commitStroke(event: MotionEvent) {
         val s = current ?: return
-        addSample(event.x, event.y, s)
+        addSample(event.x, event.y, s, force = true)
         bakeNewSegments(s)
         val c = cacheCanvas
         if (c != null) {
@@ -312,9 +346,16 @@ class DrawingView @JvmOverloads constructor(
         invalidate()
     }
 
-    /** Maps a screen touch to document space and records the point. */
-    private fun addSample(screenX: Float, screenY: Float, s: Stroke) {
+    /** Maps a screen touch to document space and records the point, skipping
+     *  samples too close to the previous one (jitter/point-bloat filter). */
+    private fun addSample(screenX: Float, screenY: Float, s: Stroke, force: Boolean = false) {
+        if (!force && haveLastAdd && hypot(screenX - lastAddX, screenY - lastAddY) < minSampleDistPx) {
+            return
+        }
         s.addPoint((screenX - transX) / scale, (screenY - transY) / scale)
+        lastAddX = screenX
+        lastAddY = screenY
+        haveLastAdd = true
     }
 
     private fun bakeNewSegments(s: Stroke) {

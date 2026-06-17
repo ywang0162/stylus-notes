@@ -103,6 +103,37 @@
                 android:contentDescription="@string/cd_export"
                 android:src="@drawable/ic_export" />
 
+            <View style="@style/ToolDivider" />
+
+            <ImageButton
+                android:id="@+id/btn_zoom_out"
+                style="@style/ToolButton"
+                android:contentDescription="@string/cd_zoom_out"
+                android:src="@drawable/ic_zoom_out" />
+
+            <TextView
+                android:id="@+id/tv_zoom"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:background="@drawable/toolbar_button_bg"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:minWidth="52dp"
+                android:paddingHorizontal="4dp"
+                android:text="100%"
+                android:textColor="@color/icon_tint"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <ImageButton
+                android:id="@+id/btn_zoom_in"
+                style="@style/ToolButton"
+                android:contentDescription="@string/cd_zoom_in"
+                android:src="@drawable/ic_zoom_in" />
+
+            <View style="@style/ToolDivider" />
+
             <TextView
                 android:id="@+id/tv_page"
                 android:layout_width="wrap_content"

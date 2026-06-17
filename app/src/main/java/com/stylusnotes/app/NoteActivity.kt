@@ -48,7 +48,7 @@ class NoteActivity : AppCompatActivity() {
             scheduleAutosave()
             updateButtons()
         }
-        dv.onViewportChanged = { updatePageIndicator() }
+        dv.onViewportChanged = { updateViewportLabels() }
 
         val content = repo.loadContent(noteId)
         dv.loadContent(content.strokes, content.pageCount)
@@ -57,7 +57,7 @@ class NoteActivity : AppCompatActivity() {
         selectTool(DrawingView.Tool.PEN)
         selectColor(Color.BLACK)
         updateButtons()
-        updatePageIndicator()
+        updateViewportLabels()
     }
 
     private fun wireToolbar() = with(binding) {
@@ -77,6 +77,10 @@ class NoteActivity : AppCompatActivity() {
         btnClear.setOnClickListener { confirmClear() }
         btnStylus.setOnClickListener { toggleStylusOnly() }
         btnExport.setOnClickListener { exportNote() }
+
+        btnZoomOut.setOnClickListener { drawingView.zoomBy(0.8f) }
+        btnZoomIn.setOnClickListener { drawingView.zoomBy(1.25f) }
+        tvZoom.setOnClickListener { drawingView.resetZoom() } // tap % to reset to 100%
     }
 
     private fun selectTool(tool: DrawingView.Tool) {
@@ -129,8 +133,9 @@ class NoteActivity : AppCompatActivity() {
         toast(if (uri != null) "Saved to Pictures/StylusNotes" else "Export failed")
     }
 
-    private fun updatePageIndicator() {
+    private fun updateViewportLabels() {
         binding.tvPage.text = "p.${binding.drawingView.currentPage()}/${binding.drawingView.pageCount}"
+        binding.tvZoom.text = "${binding.drawingView.zoomPercent()}%"
     }
 
     private fun updateButtons() = with(binding) {
