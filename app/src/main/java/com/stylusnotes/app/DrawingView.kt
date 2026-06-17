@@ -108,6 +108,27 @@ class DrawingView @JvmOverloads constructor(
     private var boxDragX = 0f
     private var boxDragY = 0f
 
+    // Edge auto-scroll while moving the box: holding it near a screen edge pans
+    // the note that way so the box can travel across the whole document.
+    private val edgeMarginPx = 52f * density
+    private val edgeSpeedPx = 11f * density
+    private var edgeVX = 0f
+    private var edgeVY = 0f
+    private var edgeScrolling = false
+    private val edgeScrollRunnable = object : Runnable {
+        override fun run() {
+            if (mode != Mode.BOXMOVE || (edgeVX == 0f && edgeVY == 0f)) {
+                edgeScrolling = false
+                return
+            }
+            // Pan the note, and move the box the opposite doc amount so it stays
+            // under the finger and travels onto the newly revealed area.
+            pan(edgeVX, edgeVY)
+            moveZoomBox(-edgeVX / scale, -edgeVY / scale)
+            postOnAnimation(this)
+        }
+    }
+
     // Finger optimization: ignore samples closer than this (in screen px) to the
     // last one. Drops finger micro-jitter and point bloat without adding lag, so
     // lines stay clean on the small screen. Filtering in screen space means high
@@ -290,6 +311,7 @@ class DrawingView @JvmOverloads constructor(
                     current = null
                     rebuildCache()
                 }
+                stopEdgeScroll()
                 mode = Mode.TRANSFORM
                 lastFocusX = focalX(event, -1)
                 lastFocusY = focalY(event, -1)
@@ -316,6 +338,7 @@ class DrawingView @JvmOverloads constructor(
                     moveZoomBox((event.x - boxDragX) / scale, (event.y - boxDragY) / scale)
                     boxDragX = event.x
                     boxDragY = event.y
+                    updateEdgeScroll(event.x, event.y)
                 }
                 Mode.BOXRESIZE -> if (event.pointerCount == 1) {
                     resizeZoomBox(event.x, event.y)
@@ -332,6 +355,7 @@ class DrawingView @JvmOverloads constructor(
 
             MotionEvent.ACTION_UP -> {
                 if (mode == Mode.DRAW) commitStroke(event)
+                stopEdgeScroll()
                 current = null
                 mode = Mode.NONE
             }
@@ -341,6 +365,7 @@ class DrawingView @JvmOverloads constructor(
                     current = null
                     rebuildCache()
                 }
+                stopEdgeScroll()
                 current = null
                 mode = Mode.NONE
             }
@@ -519,7 +544,33 @@ class DrawingView @JvmOverloads constructor(
 
     fun exitZoomWrite() {
         zoomWriteMode = false
+        stopEdgeScroll()
         invalidate()
+    }
+
+    /** Sets edge-scroll velocity from how close the dragging finger is to an edge. */
+    private fun updateEdgeScroll(x: Float, y: Float) {
+        edgeVX = when {
+            x > width - edgeMarginPx -> -edgeSpeedPx * ((x - (width - edgeMarginPx)) / edgeMarginPx).coerceIn(0f, 1f)
+            x < edgeMarginPx -> edgeSpeedPx * ((edgeMarginPx - x) / edgeMarginPx).coerceIn(0f, 1f)
+            else -> 0f
+        }
+        edgeVY = when {
+            y > height - edgeMarginPx -> -edgeSpeedPx * ((y - (height - edgeMarginPx)) / edgeMarginPx).coerceIn(0f, 1f)
+            y < edgeMarginPx -> edgeSpeedPx * ((edgeMarginPx - y) / edgeMarginPx).coerceIn(0f, 1f)
+            else -> 0f
+        }
+        if ((edgeVX != 0f || edgeVY != 0f) && !edgeScrolling) {
+            edgeScrolling = true
+            postOnAnimation(edgeScrollRunnable)
+        }
+    }
+
+    private fun stopEdgeScroll() {
+        edgeVX = 0f
+        edgeVY = 0f
+        edgeScrolling = false
+        removeCallbacks(edgeScrollRunnable)
     }
 
     /** Resizes the box by dragging its bottom-right corner toward [screenX,screenY].
