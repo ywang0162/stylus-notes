@@ -109,6 +109,7 @@ class DrawingView @JvmOverloads constructor(
 
     private var mode = Mode.NONE
     private var liveSegDrawn = 0
+    private var drawPointerId = -1
     private var lastFocusX = 0f
     private var lastFocusY = 0f
     private var boxDragX = 0f
@@ -286,7 +287,9 @@ class DrawingView @JvmOverloads constructor(
     // ---- Touch handling -----------------------------------------------------
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        scaleDetector.onTouchEvent(event)
+        // While the pen is drawing in palm-rejection mode, keep palm touches away
+        // from the pinch detector so a resting hand can't zoom the page.
+        if (!(mode == Mode.DRAW && stylusOnly)) scaleDetector.onTouchEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 if (zoomWriteMode) {
@@ -303,18 +306,26 @@ class DrawingView @JvmOverloads constructor(
                     return true
                 }
                 if (stylusOnly && event.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER) {
-                    mode = Mode.NONE
+                    // Palm-rejection mode: the pen draws, a single finger scrolls.
+                    mode = Mode.TRANSFORM
+                    lastFocusX = event.x
+                    lastFocusY = event.y
                     return true
                 }
                 requestUnbufferedDispatch(event)
                 redoStack.clear()
                 mode = Mode.DRAW
+                drawPointerId = event.getPointerId(0)
                 beginStroke(event)
             }
 
             MotionEvent.ACTION_POINTER_DOWN -> {
-                // Second finger: stop drawing, drop the half-drawn stroke, zoom/pan.
                 if (mode == Mode.DRAW) {
+                    if (stylusOnly) {
+                        // Pen is drawing; ignore extra touches (palm rejection).
+                        return true
+                    }
+                    // Finger-drawing mode: a second finger means zoom/pan instead.
                     current = null
                     rebuildCache()
                 }
@@ -325,14 +336,17 @@ class DrawingView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_MOVE -> when (mode) {
-                Mode.DRAW -> if (event.pointerCount == 1) {
+                Mode.DRAW -> {
                     val s = current ?: return true
-                    for (h in 0 until event.historySize) {
-                        addSample(event.getHistoricalX(h), event.getHistoricalY(h), s)
+                    val pi = event.findPointerIndex(drawPointerId)
+                    if (pi >= 0) {
+                        for (h in 0 until event.historySize) {
+                            addSample(event.getHistoricalX(pi, h), event.getHistoricalY(pi, h), s)
+                        }
+                        addSample(event.getX(pi), event.getY(pi), s)
+                        bakeNewSegments(s)
+                        invalidate()
                     }
-                    addSample(event.x, event.y, s)
-                    bakeNewSegments(s)
-                    invalidate()
                 }
                 Mode.TRANSFORM -> {
                     val fx = focalX(event, -1)
@@ -354,14 +368,25 @@ class DrawingView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_POINTER_UP -> {
-                if (mode == Mode.TRANSFORM) {
+                if (mode == Mode.DRAW) {
+                    // If the pen itself lifted (palm may still be down), finish the stroke.
+                    if (event.getPointerId(event.actionIndex) == drawPointerId) {
+                        commitStrokeAt(event.getX(event.actionIndex), event.getY(event.actionIndex))
+                        current = null
+                        mode = Mode.NONE
+                    }
+                } else if (mode == Mode.TRANSFORM) {
                     lastFocusX = focalX(event, event.actionIndex)
                     lastFocusY = focalY(event, event.actionIndex)
                 }
             }
 
             MotionEvent.ACTION_UP -> {
-                if (mode == Mode.DRAW) commitStroke(event)
+                if (mode == Mode.DRAW) {
+                    val pi = event.findPointerIndex(drawPointerId)
+                    if (pi >= 0) commitStrokeAt(event.getX(pi), event.getY(pi))
+                    else commitStrokeAt(event.x, event.y)
+                }
                 stopEdgeScroll()
                 current = null
                 mode = Mode.NONE
@@ -410,9 +435,9 @@ class DrawingView @JvmOverloads constructor(
         current = s
     }
 
-    private fun commitStroke(event: MotionEvent) {
+    private fun commitStrokeAt(screenX: Float, screenY: Float) {
         val s = current ?: return
-        addSample(event.x, event.y, s, force = true)
+        addSample(screenX, screenY, s, force = true)
         bakeNewSegments(s)
         val c = cacheCanvas
         if (c != null) {
