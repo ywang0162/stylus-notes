@@ -17,13 +17,13 @@ for your browser/file manager before sideloading, or use `adb install`.
 
 ## Features
 
-- **Finger-first handwriting** — one finger draws by default. Input is lightly
-  smoothed and the line width is modulated by drawing speed, so finger writing
-  looks natural even without pen pressure. (A stylus works the same way and
-  also uses pressure.)
-- **Two-finger scroll, infinite downward pages** — drag with two fingers to
-  scroll. Pulling past the bottom grows the note by another page automatically,
-  so there's no "add page" button — pages just keep flowing down as you write.
+- **Minimal track-and-show drawing** — one finger (or stylus) draws constant-width
+  ink, rendered as smooth quadratic curves through the touch points. No
+  prediction, pressure, or other gimmicks — it just tracks the finger and shows
+  the line, with each segment baked once so rendering stays fast.
+- **Two-finger pinch to zoom, drag to pan** — zoom in for detail or out for the
+  overview; one finger keeps drawing. Dragging past the bottom grows the note by
+  another page, so pages flow down as you write (no "add page" button).
 - **Home screen** — all your notes are listed as a thumbnail grid. Tap to open,
   tap **+** to start a new one, long-press to rename or delete.
 - **Optional palm rejection** — a "stylus only" toggle ignores finger/palm
